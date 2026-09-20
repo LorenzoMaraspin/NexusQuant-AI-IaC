@@ -1,0 +1,82 @@
+###############################################################################
+# NexusQuant AI — Example Terraform Variables File
+# Copy this file to `terraform.tfvars` or use `-var-file="environments/dev.tfvars"`
+# NEVER commit `terraform.tfvars` containing real secrets to Git!
+###############################################################################
+
+# --- General ---
+project_name = "nexusquant"
+environment  = "dev"
+aws_region   = "eu-north-1"
+
+# --- Networking ---
+vpc_cidr                    = "10.0.0.0/16"
+subnet_public_cidr          = "10.0.1.0/24"
+subnet_private_windows_cidr = "10.0.2.0/24"
+subnet_private_linux_cidr   = "10.0.3.0/24"
+subnet_private_db_a_cidr    = "10.0.4.0/24"
+subnet_private_db_b_cidr    = "10.0.5.0/24"
+rdp_admin_cidr              = "79.17.232.66/32" # e.g. "93.184.216.34/32" or "" to disable
+
+# --- RDS PostgreSQL ---
+db_name                   = "nexusquant"
+db_username               = "nexusadmin"
+db_password               = "NqDb!4kP7vR2zL9"
+rds_instance_class        = "db.t3.micro"
+rds_allocated_storage     = 20
+rds_max_allocated_storage = 20
+rds_multi_az              = false
+rds_deletion_protection   = false
+rds_backup_retention_days = 1
+
+# --- Secrets & MT5 Connector ---
+secret_recovery_window_days = 0 # 0 for instant destroy during dev testing, 7+ in prod
+adapter_api_key             = "q.1n5dZ}si6#W2<K\0x@1j`xK~.8H{Mo"
+mt5_account_number          = 1514675302
+mt5_server                  = "FTMO-Demo"
+mt5_password                = "fb?s!*2aR6"
+mt5_terminal_path           = "C:\\Program Files\\MetaTrader 5\\terminal64.exe"
+mt5_default_deviation       = 20
+
+# --- EC2 Windows ---
+ec2_instance_type = "t3.micro"
+ec2_key_pair_name = "" # leave empty to auto-create key pair; set to reuse existing
+github_repo_url   = "https://github.com/LorenzoMaraspin/NexeusQuant-MT5-Connector.git"
+repo_branch       = "main"
+# Public MT5 installer, downloaded & silently installed during bootstrap; override only for a broker-branded installer
+mt5_installer_url = "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe"
+
+# --- Backend Secrets & Config ---
+news_calendar_api_key = "generate_or_obtain_a_real_news_calendar_api_key_here"
+
+backend_extra_ssm_params = {
+  OLLAMA_BASE_URL                     = "http://TBD:11434"
+  LLM_REQUEST_TIMEOUT_SECONDS         = "120"
+  LLM_TEMPERATURE                     = "0.2"
+  NEWS_CALENDAR_API_URL               = "https://example.com/calendar"
+  FTMO_MAX_DAILY_LOSS_PCT             = "5"
+  MAX_RISK_PER_TRADE_PCT              = "1"
+  MIN_RISK_REWARD_RATIO               = "2"
+  MAX_EXECUTION_PRICE_DRIFT_PCT_OF_SL = "50"
+  TRADING_SYMBOL                      = "EURUSD"
+  TRADING_TIMEFRAME                   = "M15"
+  CYCLE_INTERVAL_SECONDS              = "300"
+}
+
+# --- ECR & ECS Backend ---
+ecr_max_image_count      = 15
+ecr_untagged_expiry_days = 7
+
+# Set to false on first apply (Day-0) if you want to create ECR, build/push Docker image,
+# and then set to true (Day-1) to create the ECS Fargate service.
+enable_ecs_backend = true
+backend_image_tag  = "latest"
+
+backend_task_cpu               = 512
+backend_task_memory            = 1024
+backend_log_retention_days     = 90
+backend_enable_execute_command = true
+
+# Logging
+log_level_console = "INFO"
+log_level_file    = "DEBUG"

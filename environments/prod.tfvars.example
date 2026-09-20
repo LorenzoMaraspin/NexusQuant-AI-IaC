@@ -1,0 +1,75 @@
+###############################################################################
+# Production Environment Variables — environments/prod.tfvars
+###############################################################################
+
+project_name = "nexusquant"
+environment  = "prod"
+aws_region   = "eu-north-1"
+
+# Networking
+vpc_cidr                    = "10.0.0.0/16"
+subnet_public_cidr          = "10.0.1.0/24"
+subnet_private_windows_cidr = "10.0.2.0/24"
+subnet_private_linux_cidr   = "10.0.3.0/24"
+subnet_private_db_a_cidr    = "10.0.4.0/24"
+subnet_private_db_b_cidr    = "10.0.5.0/24"
+rdp_admin_cidr              = "" # recommend SSM Session Manager instead of public RDP in prod
+
+# RDS PostgreSQL (Production Sizing & Safety)
+db_name     = "nexusquant"
+db_username = "nexusadmin"
+# db_password             = "SET_VIA_ENV_OR_TFVARS"
+rds_instance_class        = "db.t3.medium"
+rds_allocated_storage     = 50
+rds_max_allocated_storage = 200
+rds_multi_az              = true
+rds_deletion_protection   = true
+rds_backup_retention_days = 7
+
+# Secrets & MT5
+secret_recovery_window_days = 30
+# adapter_api_key           = "SET_VIA_ENV_OR_TFVARS"
+mt5_account_number = 12345678
+mt5_server         = "FTMO-Server"
+# mt5_password              = "SET_VIA_ENV_OR_TFVARS"
+mt5_terminal_path     = "C:\\Program Files\\MetaTrader 5\\terminal64.exe"
+mt5_default_deviation = 20
+
+# EC2 Windows
+ec2_instance_type = "t3.medium"
+ec2_key_pair_name = ""
+github_repo_url   = "https://github.com/LorenzoMaraspin/NexeusQuant-MT5-Connector.git"
+repo_branch       = "main"
+# Public MT5 installer, downloaded & silently installed during bootstrap; override only for a broker-branded installer
+mt5_installer_url = "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe"
+
+# Backend Secrets & Config
+# news_calendar_api_key     = "SET_VIA_ENV_OR_TFVARS"
+
+backend_extra_ssm_params = {
+  OLLAMA_BASE_URL                     = "http://production-llm:11434"
+  LLM_REQUEST_TIMEOUT_SECONDS         = "120"
+  LLM_TEMPERATURE                     = "0.2"
+  NEWS_CALENDAR_API_URL               = "https://example.com/calendar"
+  FTMO_MAX_DAILY_LOSS_PCT             = "5"
+  MAX_RISK_PER_TRADE_PCT              = "1"
+  MIN_RISK_REWARD_RATIO               = "2"
+  MAX_EXECUTION_PRICE_DRIFT_PCT_OF_SL = "50"
+  TRADING_SYMBOL                      = "EURUSD"
+  TRADING_TIMEFRAME                   = "M15"
+  CYCLE_INTERVAL_SECONDS              = "300"
+}
+
+# ECR & ECS Backend
+ecr_max_image_count      = 30
+ecr_untagged_expiry_days = 7
+
+enable_ecs_backend             = true
+backend_image_tag              = "prod-stable"
+backend_task_cpu               = 1024
+backend_task_memory            = 2048
+backend_log_retention_days     = 90
+backend_enable_execute_command = false
+
+log_level_console = "INFO"
+log_level_file    = "INFO"
