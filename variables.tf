@@ -140,7 +140,7 @@ variable "rds_backup_retention_days" {
 variable "rds_publicly_accessible" {
   description = "Whether the RDS instance is publicly accessible."
   type        = bool
-  default     = true
+  default     = false
 }
 
 
@@ -267,6 +267,18 @@ variable "backend_extra_ssm_params" {
   description = "Additional non-sensitive backend config parameters (risk thresholds, LLM settings, trading params), written under /<project>/<environment>/backend/<key>."
   type        = map(string)
   default     = {}
+}
+
+variable "bedrock_region" {
+  description = "AWS region to invoke Amazon Bedrock in — scopes the ECS task role's bedrock:InvokeModel policy. Does not need to match aws_region: the ECS task has NAT egress and can call Bedrock in any region (e.g. eu-central-1 if a model is not available in eu-north-1)."
+  type        = string
+  default     = "eu-north-1"
+}
+
+variable "bedrock_model_ids" {
+  description = "Bedrock foundation model IDs the ECS task role is allowed to invoke. Must match the model IDs set via ANALYST_MODEL_NAME/STRATEGIST_MODEL_NAME/RISK_GUARD_MODEL_NAME in backend_extra_ssm_params when LLM_PROVIDER=bedrock. Empty list = no Bedrock IAM policy created (e.g. LLM_PROVIDER=ollama)."
+  type        = list(string)
+  default     = []
 }
 
 # =============================================================================

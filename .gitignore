@@ -34,3 +34,10 @@ terraform.rc
 *.pem
 *.key
 *.env
+
+# Terraform plan files (can embed full state, including secrets, in cleartext)
+terraformplan
+tfplan
+*.tfplan
+plan
+*.plan

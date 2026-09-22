@@ -102,3 +102,15 @@ variable "postgres_db" {
   description = "PostgreSQL database name."
   type        = string
 }
+
+variable "bedrock_region" {
+  description = "AWS region to invoke Amazon Bedrock in (used only to scope the task role's bedrock:InvokeModel policy — the backend's own BEDROCK_REGION env var, set via backend_ssm_params, is what the application actually uses at runtime)."
+  type        = string
+  default     = "eu-north-1"
+}
+
+variable "bedrock_model_ids" {
+  description = "Bedrock foundation model IDs the ECS task role is allowed to invoke (e.g. \"amazon.nova-lite-v1:0\"). The IAM policy is scoped to exactly these model ARNs — never bedrock:* on Resource \"*\". Leave empty to skip creating the policy (e.g. when LLM_PROVIDER=ollama and Bedrock is not used)."
+  type        = list(string)
+  default     = []
+}

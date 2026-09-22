@@ -166,6 +166,32 @@ resource "aws_iam_role_policy" "ecs_task_exec" {
   })
 }
 
+resource "aws_iam_role_policy" "ecs_task_bedrock" {
+  count = length(var.bedrock_model_ids) > 0 ? 1 : 0
+
+  name = "backend-bedrock-invoke"
+  role = aws_iam_role.ecs_task.id
+
+  # Scoped to the exact approved model IDs — never "bedrock:*" on
+  # Resource "*". Update var.bedrock_model_ids to change which models
+  # the LLM agent nodes are allowed to invoke in production.
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "BedrockInvokeApprovedModels"
+      Effect = "Allow"
+      Action = [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ]
+      Resource = [
+        for model_id in var.bedrock_model_ids :
+        "arn:aws:bedrock:${var.bedrock_region}::foundation-model/${model_id}"
+      ]
+    }]
+  })
+}
+
 # --- CloudWatch Log Group ---
 
 resource "aws_cloudwatch_log_group" "backend" {

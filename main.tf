@@ -154,4 +154,10 @@ module "ecs_backend" {
   postgres_host        = module.rds.endpoint
   postgres_port        = tostring(module.rds.port)
   postgres_db          = module.rds.db_name
+
+  # Bedrock — only invoked when LLM_PROVIDER=bedrock (set via
+  # backend_extra_ssm_params below); the IAM policy is skipped entirely
+  # when bedrock_model_ids is empty.
+  bedrock_region    = var.bedrock_region
+  bedrock_model_ids = var.bedrock_model_ids
 }

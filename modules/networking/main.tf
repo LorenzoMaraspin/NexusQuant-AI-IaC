@@ -162,12 +162,12 @@ resource "aws_route_table_association" "linux" {
 
 resource "aws_route_table_association" "db_a" {
   subnet_id      = aws_subnet.private_db_a.id
-  route_table_id = aws_route_table.public.id
+  route_table_id = aws_route_table.private.id
 }
 
 resource "aws_route_table_association" "db_b" {
   subnet_id      = aws_subnet.private_db_b.id
-  route_table_id = aws_route_table.public.id
+  route_table_id = aws_route_table.private.id
 }
 
 # --- Security Groups ---
