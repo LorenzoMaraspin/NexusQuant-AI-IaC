@@ -40,6 +40,7 @@ module "rds" {
   multi_az              = var.rds_multi_az
   deletion_protection   = var.rds_deletion_protection
   backup_retention_days = var.rds_backup_retention_days
+  publicly_accessible   = var.rds_publicly_accessible
 }
 
 # --------------------------------------------------------------------------- #
@@ -63,6 +64,7 @@ module "secrets_adapter" {
   mt5_default_deviation       = var.mt5_default_deviation
   log_level_console           = var.log_level_console
   log_level_file              = var.log_level_file
+  github_token                = var.github_token
 }
 
 # --------------------------------------------------------------------------- #
@@ -71,18 +73,20 @@ module "secrets_adapter" {
 module "ec2_windows" {
   source = "./modules/ec2_windows"
 
-  project_name          = var.project_name
-  environment           = var.environment
-  aws_region            = var.aws_region
-  subnet_id             = module.networking.subnet_public_id
-  sg_windows_adapter_id = module.networking.sg_windows_adapter_id
-  secret_arn            = module.secrets_adapter.secret_arn
-  secret_name           = module.secrets_adapter.secret_name
-  instance_type         = var.ec2_instance_type
-  key_pair_name         = var.ec2_key_pair_name
-  github_repo_url       = var.github_repo_url
-  repo_branch           = var.repo_branch
-  mt5_installer_url     = var.mt5_installer_url
+  project_name              = var.project_name
+  environment               = var.environment
+  aws_region                = var.aws_region
+  subnet_id                 = module.networking.subnet_public_id
+  sg_windows_adapter_id     = module.networking.sg_windows_adapter_id
+  secret_arn                = module.secrets_adapter.secret_arn
+  secret_name               = module.secrets_adapter.secret_name
+  instance_type             = var.ec2_instance_type
+  key_pair_name             = var.ec2_key_pair_name
+  github_repo_url           = var.github_repo_url
+  repo_branch               = var.repo_branch
+  mt5_installer_url         = var.mt5_installer_url
+  log_retention_days        = var.ec2_log_retention_days
+  cloudwatch_log_group_name = var.ec2_cloudwatch_log_group_name
 }
 
 # --------------------------------------------------------------------------- #

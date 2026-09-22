@@ -162,12 +162,12 @@ resource "aws_route_table_association" "linux" {
 
 resource "aws_route_table_association" "db_a" {
   subnet_id      = aws_subnet.private_db_a.id
-  route_table_id = aws_route_table.private.id
+  route_table_id = aws_route_table.public.id
 }
 
 resource "aws_route_table_association" "db_b" {
   subnet_id      = aws_subnet.private_db_b.id
-  route_table_id = aws_route_table.private.id
+  route_table_id = aws_route_table.public.id
 }
 
 # --- Security Groups ---
@@ -191,6 +191,17 @@ resource "aws_security_group" "windows_adapter" {
       description = "RDP for initial MT5 terminal setup"
       from_port   = 3389
       to_port     = 3389
+      protocol    = "tcp"
+      cidr_blocks = [var.rdp_admin_cidr]
+    }
+  }
+
+  dynamic "ingress" {
+    for_each = var.rdp_admin_cidr != "" ? [1] : []
+    content {
+      description = "MT5 REST API from admin workstation IP"
+      from_port   = 8100
+      to_port     = 8100
       protocol    = "tcp"
       cidr_blocks = [var.rdp_admin_cidr]
     }
@@ -230,6 +241,17 @@ resource "aws_security_group" "rds" {
     to_port     = 5432
     protocol    = "tcp"
     cidr_blocks = [var.subnet_private_linux_cidr]
+  }
+
+  dynamic "ingress" {
+    for_each = var.rdp_admin_cidr != "" ? [1] : []
+    content {
+      description = "PostgreSQL from admin workstation IP"
+      from_port   = 5432
+      to_port     = 5432
+      protocol    = "tcp"
+      cidr_blocks = [var.rdp_admin_cidr]
+    }
   }
 
   egress {

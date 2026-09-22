@@ -38,7 +38,7 @@ mt5_default_deviation = 20
 # EC2 Windows
 ec2_instance_type = "t3.micro"
 ec2_key_pair_name = ""
-github_repo_url   = "https://github.com/LorenzoMaraspin/NexeusQuant-MT5-Connector.git"
+github_repo_url   = "https://github.com/LorenzoMaraspin/NexusQuant-MT5-Connector.git"
 repo_branch       = "main"
 # Public MT5 installer, downloaded & silently installed during bootstrap; override only for a broker-branded installer
 mt5_installer_url = "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe"

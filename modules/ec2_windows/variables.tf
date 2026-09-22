@@ -57,7 +57,19 @@ variable "repo_branch" {
 }
 
 variable "mt5_installer_url" {
-  description = "Public HTTPS URL of the MetaTrader 5 Windows installer (mt5setup.exe), downloaded and silently installed (/auto) during bootstrap instead of requiring a manual RDP session."
+  description = "Public HTTPS URL of the MetaTrader 5 Windows installer (mt5setup.exe)."
   type        = string
   default     = "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe"
+}
+
+variable "log_retention_days" {
+  description = "CloudWatch Logs retention in days for the EC2 MT5 adapter log group."
+  type        = number
+  default     = 90
+}
+
+variable "cloudwatch_log_group_name" {
+  description = "Custom CloudWatch log group name for the EC2 instance. If empty, defaults to /<project_name>/<environment>/mt5-adapter."
+  type        = string
+  default     = ""
 }

@@ -20,6 +20,13 @@ variable "adapter_api_key" {
   sensitive   = true
 }
 
+variable "github_token" {
+  description = "GitHub Personal Access Token (PAT) for cloning the private repository."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "mt5_password" {
   description = "MetaTrader 5 account password."
   type        = string

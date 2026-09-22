@@ -85,6 +85,16 @@ output "secrets_adapter_ssm_prefix" {
   value       = module.secrets_adapter.ssm_prefix
 }
 
+output "ec2_windows_log_group_name" {
+  description = "CloudWatch log group name for the EC2 MT5 adapter."
+  value       = module.ec2_windows.cloudwatch_log_group_name
+}
+
+output "ec2_windows_log_group_arn" {
+  description = "CloudWatch log group ARN for the EC2 MT5 adapter."
+  value       = module.ec2_windows.cloudwatch_log_group_arn
+}
+
 # =============================================================================
 # Backend (ECR, ECS Fargate & Secrets)
 # =============================================================================

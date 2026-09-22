@@ -56,13 +56,13 @@ resource "aws_db_instance" "main" {
   parameter_group_name   = aws_db_parameter_group.postgres16.name
 
   multi_az                  = var.multi_az
-  publicly_accessible       = false
+  publicly_accessible       = var.publicly_accessible
   deletion_protection       = var.deletion_protection
-  skip_final_snapshot       = !var.deletion_protection
+  skip_final_snapshot       = true
   final_snapshot_identifier = var.deletion_protection ? "${var.project_name}-rds-final-${var.environment}" : null
 
   backup_retention_period = var.backup_retention_days
-  backup_window           = "03:00-04:00"
+  backup_window           = var.backup_retention_days > 0 ? "03:00-04:00" : null
   maintenance_window      = "Mon:04:00-Mon:05:00"
 
   enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]

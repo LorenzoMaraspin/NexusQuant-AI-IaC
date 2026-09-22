@@ -137,6 +137,13 @@ variable "rds_backup_retention_days" {
   default     = 1
 }
 
+variable "rds_publicly_accessible" {
+  description = "Whether the RDS instance is publicly accessible."
+  type        = bool
+  default     = true
+}
+
+
 # =============================================================================
 # 4. Secrets & MT5 Connector Configuration
 # =============================================================================
@@ -218,13 +225,32 @@ variable "ec2_key_pair_name" {
 variable "github_repo_url" {
   description = "Git clone URL of the MT5 connector repository."
   type        = string
-  default     = "https://github.com/LorenzoMaraspin/NexeusQuant-MT5-Connector.git"
+  default     = "https://github.com/LorenzoMaraspin/NexusQuant-MT5-Connector.git"
+}
+
+variable "github_token" {
+  description = "GitHub Personal Access Token (PAT) for cloning the private MT5 Connector repository."
+  type        = string
+  sensitive   = true
+  default     = ""
 }
 
 variable "repo_branch" {
   description = "Branch to checkout on the Windows instance."
   type        = string
   default     = "main"
+}
+
+variable "ec2_log_retention_days" {
+  description = "CloudWatch Logs retention in days for the EC2 MT5 adapter."
+  type        = number
+  default     = 90
+}
+
+variable "ec2_cloudwatch_log_group_name" {
+  description = "Custom CloudWatch log group name for the EC2 instance. Leave empty to use /<project_name>/<environment>/mt5-adapter."
+  type        = string
+  default     = ""
 }
 
 # =============================================================================

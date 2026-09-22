@@ -24,6 +24,7 @@ resource "aws_secretsmanager_secret_version" "mt5_adapter" {
     POSTGRES_URL    = "postgresql+psycopg://${var.db_username}:${var.db_password}@${var.rds_endpoint}:5432/${var.db_name}"
     DB_USERNAME     = var.db_username
     DB_PASSWORD     = var.db_password
+    GITHUB_TOKEN    = var.github_token
   })
 }
 

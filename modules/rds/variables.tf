@@ -71,3 +71,10 @@ variable "backup_retention_days" {
   type        = number
   default     = 1
 }
+
+variable "publicly_accessible" {
+  description = "Whether the RDS instance is publicly accessible."
+  type        = bool
+  default     = false
+}
+

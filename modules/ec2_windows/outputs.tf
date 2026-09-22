@@ -28,3 +28,18 @@ output "private_key_pem" {
   value       = var.key_pair_name == "" ? tls_private_key.ec2_windows[0].private_key_pem : null
   sensitive   = true
 }
+
+output "cloudwatch_log_group_name" {
+  description = "Name of the CloudWatch log group for the EC2 instance and MT5 adapter."
+  value       = aws_cloudwatch_log_group.adapter.name
+}
+
+output "cloudwatch_log_group_arn" {
+  description = "ARN of the CloudWatch log group for the EC2 instance and MT5 adapter."
+  value       = aws_cloudwatch_log_group.adapter.arn
+}
+
+output "ssm_bootstrap_document_name" {
+  description = "Name of the SSM Document used to bootstrap the EC2 instance."
+  value       = aws_ssm_document.bootstrap.name
+}
