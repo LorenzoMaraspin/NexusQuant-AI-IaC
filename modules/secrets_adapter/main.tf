@@ -25,6 +25,8 @@ resource "aws_secretsmanager_secret_version" "mt5_adapter" {
     DB_USERNAME     = var.db_username
     DB_PASSWORD     = var.db_password
     GITHUB_TOKEN    = var.github_token
+    WINDOWS_ADMIN_USER = var.windows_admin_user
+    WINDOWS_ADMIN_PASSWORD = var.windows_admin_password
   })
 }
 
