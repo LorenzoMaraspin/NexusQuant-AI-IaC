@@ -579,6 +579,88 @@ resource "aws_ssm_document" "bootstrap" {
   }
 }
 
+resource "aws_ssm_document" "reboot_verify" {
+  name            = "${var.project_name}-mt5-reboot-verify-${var.environment}"
+  document_type   = "Command"
+  document_format = "YAML"
+
+  content = yamlencode({
+    schemaVersion = "2.2"
+    description   = "ONE-OFF: reboot the MT5 Adapter EC2 instance and verify Terminal + Adapter come up interactively. Invoke manually via 'aws ssm send-command'. Do NOT create an aws_ssm_association for this document — Associations re-apply on every SSM Agent restart (i.e. every reboot), and since this document itself reboots the instance, an association would cause an infinite reboot loop."
+    parameters    = {}
+    mainSteps = [
+      {
+        action = "aws:runPowerShellScript"
+        name   = "RebootInstance"
+        inputs = {
+          runCommand = [
+            "Write-Host '=== Rebooting instance to activate Auto-Logon and Scheduled Tasks ==='",
+            "Write-Host 'Exiting with code 3010: SSM Agent will reboot the instance and resume this SAME command invocation automatically after restart.'",
+            "exit 3010"
+          ]
+        }
+      },
+      {
+        action = "aws:runPowerShellScript"
+        name   = "VerifyAdapterHealth"
+        inputs = {
+          runCommand = [
+            "$ErrorActionPreference = 'Stop'",
+            "Write-Host '=== Verifying MT5 Terminal and Adapter After Reboot ==='",
+            "$MaxWaitSeconds = 180",
+            "$PollIntervalSeconds = 5",
+            "$Elapsed = 0",
+            "$TerminalUp = $false",
+            "$PortListening = $false",
+            "$HealthOk = $false",
+            "while ($Elapsed -lt $MaxWaitSeconds) {",
+            "    Start-Sleep -Seconds $PollIntervalSeconds",
+            "    $Elapsed += $PollIntervalSeconds",
+            "    if (-not $TerminalUp) {",
+            "        if (Get-Process -Name 'terminal64' -ErrorAction SilentlyContinue) {",
+            "            $TerminalUp = $true",
+            "            Write-Host 'terminal64.exe process detected (running interactively via Scheduled Task).'",
+            "        }",
+            "    }",
+            "    if (-not $PortListening) {",
+            "        if (Get-NetTCPConnection -LocalPort 8100 -State Listen -ErrorAction SilentlyContinue) {",
+            "            $PortListening = $true",
+            "            Write-Host 'TCP port 8100 is listening.'",
+            "        }",
+            "    }",
+            "    if ($PortListening -and (-not $HealthOk)) {",
+            "        try {",
+            "            $resp = Invoke-RestMethod -Uri 'http://localhost:8100/api/v1/health' -Method Get -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop",
+            "            if ($resp.status -eq 'ok' -and $resp.mt5_connected -eq $true) {",
+            "                Write-Host \"Health check verified: status=$($resp.status), mt5_connected=$($resp.mt5_connected)\"",
+            "                $HealthOk = $true",
+            "            } else {",
+            "                Write-Host \"Health check pending: status=$($resp.status), mt5_connected=$($resp.mt5_connected)\"",
+            "            }",
+            "        } catch { Write-Host \"Waiting for HTTP health response: $($_.Exception.Message)\" }",
+            "    }",
+            "    if ($TerminalUp -and $HealthOk) { break }",
+            "}",
+            "if (-not $TerminalUp) { Write-Warning 'terminal64.exe was NOT detected running after reboot within timeout.' }",
+            "if (-not $PortListening) { Write-Warning 'Adapter did NOT bind to TCP port 8100 within timeout.' }",
+            "if (-not $HealthOk) {",
+            "    Write-Warning 'mt5_connected was not confirmed true. NOTE: AutoTrading still needs one manual click after this first post-fix boot.'",
+            "    Get-Content -Path 'C:\\nexusquant\\logs\\mt5_adapter_stdout.log' -Tail 30 -ErrorAction SilentlyContinue | Write-Host",
+            "} else {",
+            "    Write-Host 'SUCCESS: terminal64.exe running interactively, Adapter listening on 8100, MT5 connected.'",
+            "}"
+          ]
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Environment = var.environment
+    Project     = var.project_name
+  }
+}
+
 # --- SSM Association: Execute MT5 Bootstrap on EC2 Instance ---
 
 resource "aws_ssm_association" "bootstrap" {
