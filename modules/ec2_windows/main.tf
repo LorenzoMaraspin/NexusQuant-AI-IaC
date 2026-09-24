@@ -266,7 +266,7 @@ resource "aws_ssm_document" "bootstrap" {
   document_type   = "Command"
   document_format = "YAML"
 
-  content = yamlencode({
+    content = yamlencode({
     schemaVersion = "2.2"
     description   = "Bootstrap NexusQuant MT5 Connector on Windows Server 2022"
     parameters = {
@@ -316,7 +316,7 @@ resource "aws_ssm_document" "bootstrap" {
             "    Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))",
             "    $env:PATH += ';C:\\ProgramData\\chocolatey\\bin'",
             "}",
-            "choco install python312 git nssm awscli --yes --no-progress",
+            "choco install python312 git awscli --yes --no-progress",
             "$env:PATH = [System.Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH', 'User')",
             "python --version",
             "git --version"
@@ -325,7 +325,7 @@ resource "aws_ssm_document" "bootstrap" {
       },
       {
         action = "aws:runPowerShellScript"
-        name   = "InstallMetaTrader5"
+        name   = "InstallMetaTrader5Terminal"
         inputs = {
           runCommand = [
             "$ErrorActionPreference = 'Stop'",
@@ -352,16 +352,14 @@ resource "aws_ssm_document" "bootstrap" {
       },
       {
         action = "aws:runPowerShellScript"
-        name   = "SetupRepositoryAndVirtualenv"
+        name   = "CloneOrUpdateRepository"
         inputs = {
           runCommand = [
             "$ErrorActionPreference = 'Stop'",
-            "Write-Host '=== Step 3: Setting up Repository and Python Virtualenv ==='",
+            "Write-Host '=== Step 3: Cloning/Updating MT5 Connector Repository ==='",
             "$env:PATH = [System.Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH', 'User')",
             "$env:GIT_TERMINAL_PROMPT = '0'",
             "$RepoDir = 'C:\\nexusquant\\NexusQuant-MT5-Connector'",
-            "$initialService = Get-Service -Name 'MT5Adapter' -ErrorAction SilentlyContinue",
-            "$wasRunning = ($initialService -and $initialService.Status -eq 'Running')",
             "try {",
             "    $SecretJson = aws secretsmanager get-secret-value --secret-id '{{ SecretName }}' --region '{{ AwsRegion }}' --query SecretString --output text",
             "    $Secrets = $SecretJson | ConvertFrom-Json",
@@ -374,62 +372,62 @@ resource "aws_ssm_document" "bootstrap" {
             "if ((Test-Path $RepoDir) -and (-not (Test-Path \"$RepoDir\\.git\"))) {",
             "    Remove-Item -Path $RepoDir -Recurse -Force",
             "}",
-            "try {",
-            "    if (-not (Test-Path \"$RepoDir\\.git\")) {",
-            "        Write-Host 'Cloning repository...'",
-            "        git clone --branch '{{ RepoBranch }}' $CloneUrl $RepoDir",
-            "    } else {",
-            "        Write-Host 'Updating repository from origin {{ RepoBranch }}...'",
-            "        Push-Location $RepoDir",
-            "        git remote set-url origin $CloneUrl",
-            "        git fetch origin '{{ RepoBranch }}'",
-            "        git reset --hard \"origin/{{ RepoBranch }}\"",
-            "        Pop-Location",
-            "    }",
+            "if (-not (Test-Path \"$RepoDir\\.git\")) {",
+            "    Write-Host 'Cloning repository...'",
+            "    git clone --branch '{{ RepoBranch }}' $CloneUrl $RepoDir",
+            "} else {",
+            "    Write-Host 'Updating repository from origin {{ RepoBranch }}...'",
             "    Push-Location $RepoDir",
-            "    if (-not (Test-Path '.venv')) { python -m venv .venv }",
-            "    & '.\\.venv\\Scripts\\python.exe' -m pip install --upgrade pip",
-            "    & '.\\.venv\\Scripts\\python.exe' -m pip install -e .",
-            "    New-Item -ItemType Directory -Force -Path 'logs', 'data' | Out-Null",
+            "    git remote set-url origin $CloneUrl",
+            "    git fetch origin '{{ RepoBranch }}'",
+            "    git reset --hard \"origin/{{ RepoBranch }}\"",
             "    Pop-Location",
-            "    Write-Host 'Virtualenv and dependencies ready.'",
-            "} catch {",
-            "    Write-Host \"ERROR during repository/dependency setup: $_\"",
-            "    if ($wasRunning) {",
-            "        Write-Host 'Emergency recovery: restarting MT5Adapter service to maintain availability...'",
-            "        Start-Service -Name 'MT5Adapter' -ErrorAction SilentlyContinue",
-            "    }",
-            "    throw $_",
-            "}"
+            "}",
+            "Write-Host 'Repository ready at' $RepoDir"
           ]
         }
       },
-      {      {
+      {
         action = "aws:runPowerShellScript"
-        name   = "ConfigureAndStartNssmService"
+        name   = "SetupPythonVirtualenv"
         inputs = {
           runCommand = [
             "$ErrorActionPreference = 'Stop'",
-            "Write-Host '=== Step 4: Configuring Interactive Auto-Logon Session (Session 0 fix) ==='",
-            "if (-not (Get-NetFirewallRule -DisplayName 'NexusQuant MT5 Adapter (8100)' -ErrorAction SilentlyContinue)) { New-NetFirewallRule -DisplayName 'NexusQuant MT5 Adapter (8100)' -Direction Inbound -Protocol TCP -LocalPort 8100 -Action Allow | Out-Null }",
-            "$env:PATH = [System.Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH', 'User')",
+            "Write-Host '=== Step 4: Setting up Python Virtualenv ==='",
             "$RepoDir = 'C:\\nexusquant\\NexusQuant-MT5-Connector'",
-            "New-Item -ItemType Directory -Force -Path $RepoDir | Out-Null",
-            "$NssmExe = 'C:\\ProgramData\\chocolatey\\bin\\nssm.exe'",
-            "$ServiceName = 'MT5Adapter'",
-            "$PsExe = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'",
-            "$LauncherPath = \"$RepoDir\\fetch_secrets.ps1\"",
-            "# --- Remove legacy NSSM service (Session 0 — AutoTrading can never be enabled there) ---",
-            "$existingSvc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue",
-            "if ($existingSvc) {",
-            "    Write-Host 'Removing legacy NSSM service (was running in Session 0)...'",
-            "    Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue",
-            "    & $NssmExe remove $ServiceName confirm",
+            "Push-Location $RepoDir",
+            "if (-not (Test-Path '.venv')) { python -m venv .venv }",
+            "& '.\\.venv\\Scripts\\python.exe' -m pip install --upgrade pip",
+            "& '.\\.venv\\Scripts\\python.exe' -m pip install -e .",
+            "New-Item -ItemType Directory -Force -Path 'logs', 'data' | Out-Null",
+            "Pop-Location",
+            "Write-Host 'Virtualenv and dependencies ready.'"
+          ]
+        }
+      },
+      {
+        action = "aws:runPowerShellScript"
+        name   = "ConfigureFirewall"
+        inputs = {
+          runCommand = [
+            "$ErrorActionPreference = 'Stop'",
+            "Write-Host '=== Step 5: Configuring Firewall ==='",
+            "if (-not (Get-NetFirewallRule -DisplayName 'NexusQuant MT5 Adapter (8100)' -ErrorAction SilentlyContinue)) {",
+            "    New-NetFirewallRule -DisplayName 'NexusQuant MT5 Adapter (8100)' -Direction Inbound -Protocol TCP -LocalPort 8100 -Action Allow | Out-Null",
             "}",
-            "Get-Process -Name 'terminal64' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
-            "Get-Process -Name 'powershell', 'python' -ErrorAction SilentlyContinue | Where-Object { $_.Path -like 'C:\\nexusquant\\*' } | Stop-Process -Force -ErrorAction SilentlyContinue",
-            "Start-Sleep -Seconds 2",
-            "# --- Write launcher script (same content/logic as before, only the run mechanism changes) ---",
+            "Write-Host 'Firewall rule for TCP 8100 ensured (inbound access is still gated by the EC2 Security Group).'"
+          ]
+        }
+      },
+      {
+        action = "aws:runPowerShellScript"
+        name   = "WriteAdapterLauncherScript"
+        inputs = {
+          runCommand = [
+            "$ErrorActionPreference = 'Stop'",
+            "Write-Host '=== Step 6: Writing Adapter Launcher Script ==='",
+            "$RepoDir = 'C:\\nexusquant\\NexusQuant-MT5-Connector'",
+            "$LauncherPath = \"$RepoDir\\fetch_secrets.ps1\"",
             "$LauncherContent = @\"",
             "#Requires -Version 5.1",
             "Set-StrictMode -Version Latest",
@@ -459,28 +457,116 @@ resource "aws_ssm_document" "bootstrap" {
             "& \"`$RepoDir\\.venv\\Scripts\\python.exe\" -m presentation.main *>> 'C:\\nexusquant\\logs\\mt5_adapter_stdout.log'",
             "\"@",
             "Set-Content -Path $LauncherPath -Value $LauncherContent -Encoding UTF8",
-            "# --- Auto-logon: puts the instance into a real interactive session (Session 1+) on every boot ---",
+            "Write-Host 'Launcher script written to' $LauncherPath"
+          ]
+        }
+      },
+      {
+        action = "aws:runPowerShellScript"
+        name   = "ConfigureAutoLogonAndScheduledTasks"
+        inputs = {
+          runCommand = [
+            "$ErrorActionPreference = 'Stop'",
+            "Write-Host '=== Step 7: Configuring Interactive Auto-Logon and Scheduled Tasks (Session 0 fix) ==='",
+            "$env:PATH = [System.Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH', 'User')",
+            "$RepoDir = 'C:\\nexusquant\\NexusQuant-MT5-Connector'",
+            "$LauncherPath = \"$RepoDir\\fetch_secrets.ps1\"",
+            "$PsExe = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'",
+            "$NssmExe = 'C:\\ProgramData\\chocolatey\\bin\\nssm.exe'",
+            "$existingSvc = Get-Service -Name 'MT5Adapter' -ErrorAction SilentlyContinue",
+            "if ($existingSvc) {",
+            "    Write-Host 'Removing legacy NSSM service...'",
+            "    Stop-Service -Name 'MT5Adapter' -Force -ErrorAction SilentlyContinue",
+            "    if (Test-Path $NssmExe) { & $NssmExe remove MT5Adapter confirm }",
+            "}",
+            "Get-Process -Name 'terminal64' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
+            "Get-Process -Name 'powershell', 'python' -ErrorAction SilentlyContinue | Where-Object { $_.Path -like 'C:\\nexusquant\\*' } | Stop-Process -Force -ErrorAction SilentlyContinue",
+            "Start-Sleep -Seconds 2",
             "try {",
-            "    `$SecretJson = aws secretsmanager get-secret-value --secret-id '{{ SecretName }}' --region '{{ AwsRegion }}' --query SecretString --output text",
-            "    `$Secrets = $SecretJson | ConvertFrom-Json",
+            "    $SecretJson = aws secretsmanager get-secret-value --secret-id '{{ SecretName }}' --region '{{ AwsRegion }}' --query SecretString --output text",
+            "    $Secrets = $SecretJson | ConvertFrom-Json",
             "    $WinUser = $Secrets.WINDOWS_ADMIN_USER",
             "    $WinPass = $Secrets.WINDOWS_ADMIN_PASSWORD",
-            "} catch { Write-Host 'ERROR loading Windows admin credentials for auto-logon: ' $_; exit 1 }",
+            "} catch { Write-Host 'ERROR loading Windows admin credentials: ' $_; exit 1 }",
             "$WinLogonKey = 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon'",
             "Set-ItemProperty $WinLogonKey 'AutoAdminLogon' -Value '1'",
             "Set-ItemProperty $WinLogonKey 'DefaultUsername' -Value $WinUser",
             "Set-ItemProperty $WinLogonKey 'DefaultPassword' -Value $WinPass",
             "Set-ItemProperty $WinLogonKey 'DefaultDomainName' -Value $env:COMPUTERNAME",
-            "# --- Scheduled Tasks (Session 1+, interactive — this is what makes AutoTrading state stick) ---",
             "$trigger = New-ScheduledTaskTrigger -AtLogOn -User $WinUser",
             "$principal = New-ScheduledTaskPrincipal -UserId $WinUser -LogonType Interactive -RunLevel Highest",
             "Unregister-ScheduledTask -TaskName 'MT5Terminal' -Confirm:$false -ErrorAction SilentlyContinue",
             "Unregister-ScheduledTask -TaskName 'MT5AdapterTask' -Confirm:$false -ErrorAction SilentlyContinue",
+            "$settingsTerminal = New-ScheduledTaskSettingsSet -Hidden:$false -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries",
             "$actionTerminal = New-ScheduledTaskAction -Execute 'C:\\Program Files\\MetaTrader 5\\terminal64.exe'",
-            "Register-ScheduledTask -TaskName 'MT5Terminal' -Action $actionTerminal -Trigger $trigger -Principal $principal | Out-Null",
+            "Register-ScheduledTask -TaskName 'MT5Terminal' -Action $actionTerminal -Trigger $trigger -Principal $principal -Settings $settingsTerminal | Out-Null",
             "$actionAdapter = New-ScheduledTaskAction -Execute $PsExe -Argument \"-ExecutionPolicy Bypass -NonInteractive -File `\"$LauncherPath`\"\"",
             "Register-ScheduledTask -TaskName 'MT5AdapterTask' -Action $actionAdapter -Trigger $trigger -Principal $principal | Out-Null",
-            "Write-Host 'SUCCESS: Auto-logon and interactive Scheduled Tasks configured. A REBOOT of the instance is required for AutoAdminLogon to take effect and start the interactive session (this SSM document itself runs as SYSTEM/Session 0 and cannot start it live).'"
+            "Write-Host 'Auto-logon and Scheduled Tasks configured. Proceeding to reboot in the next step.'"
+          ]
+        }
+      },
+      {
+        action = "aws:runPowerShellScript"
+        name   = "RebootInstance"
+        inputs = {
+          runCommand = [
+            "Write-Host '=== Step 8: Rebooting instance to activate Auto-Logon and Scheduled Tasks ==='",
+            "Write-Host 'Exiting with code 3010: SSM Agent will reboot the instance and resume this document automatically after restart.'",
+            "exit 3010"
+          ]
+        }
+      },
+      {
+        action = "aws:runPowerShellScript"
+        name   = "VerifyAdapterHealth"
+        inputs = {
+          runCommand = [
+            "$ErrorActionPreference = 'Stop'",
+            "Write-Host '=== Step 9: Verifying MT5 Terminal and Adapter After Reboot ==='",
+            "$MaxWaitSeconds = 180",
+            "$PollIntervalSeconds = 5",
+            "$Elapsed = 0",
+            "$TerminalUp = $false",
+            "$PortListening = $false",
+            "$HealthOk = $false",
+            "while ($Elapsed -lt $MaxWaitSeconds) {",
+            "    Start-Sleep -Seconds $PollIntervalSeconds",
+            "    $Elapsed += $PollIntervalSeconds",
+            "    if (-not $TerminalUp) {",
+            "        if (Get-Process -Name 'terminal64' -ErrorAction SilentlyContinue) {",
+            "            $TerminalUp = $true",
+            "            Write-Host 'terminal64.exe process detected (running interactively via Scheduled Task).'",
+            "        }",
+            "    }",
+            "    if (-not $PortListening) {",
+            "        if (Get-NetTCPConnection -LocalPort 8100 -State Listen -ErrorAction SilentlyContinue) {",
+            "            $PortListening = $true",
+            "            Write-Host 'TCP port 8100 is listening.'",
+            "        }",
+            "    }",
+            "    if ($PortListening -and (-not $HealthOk)) {",
+            "        try {",
+            "            $resp = Invoke-RestMethod -Uri 'http://localhost:8100/api/v1/health' -Method Get -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop",
+            "            if ($resp.status -eq 'ok' -and $resp.mt5_connected -eq $true) {",
+            "                Write-Host \"Health check verified: status=$($resp.status), mt5_connected=$($resp.mt5_connected)\"",
+            "                $HealthOk = $true",
+            "            } else {",
+            "                Write-Host \"Health check pending: status=$($resp.status), mt5_connected=$($resp.mt5_connected)\"",
+            "            }",
+            "        } catch { Write-Host \"Waiting for HTTP health response: $($_.Exception.Message)\" }",
+            "    }",
+            "    if ($TerminalUp -and $HealthOk) { break }",
+            "}",
+            "if (-not $TerminalUp) { Write-Warning 'terminal64.exe was NOT detected running after reboot within timeout — check Scheduled Task MT5Terminal and the auto-logon registry keys.' }",
+            "if (-not $PortListening) { Write-Warning 'Adapter did NOT bind to TCP port 8100 within timeout — check Scheduled Task MT5AdapterTask and C:\\nexusquant\\logs\\mt5_adapter_stdout.log.' }",
+            "if (-not $HealthOk) {",
+            "    Write-Warning 'mt5_connected was not confirmed true. NOTE: this reflects the terminal login/connection state, not the AutoTrading toggle — that still requires one manual click on the terminal after this first post-fix boot.'",
+            "    Write-Host 'Recent adapter stdout log:'",
+            "    Get-Content -Path 'C:\\nexusquant\\logs\\mt5_adapter_stdout.log' -Tail 30 -ErrorAction SilentlyContinue | Write-Host",
+            "} else {",
+            "    Write-Host 'SUCCESS: terminal64.exe running interactively, Adapter listening on 8100, MT5 connected. Remember: AutoTrading itself still needs one manual click on this first boot after the fix.'",
+            "}"
           ]
         }
       }
