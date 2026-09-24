@@ -27,6 +27,15 @@ locals {
   effective_key_pair_name  = var.key_pair_name != "" ? var.key_pair_name : "${var.project_name}-ec2-windows-${var.environment}"
   effective_log_group_name = var.cloudwatch_log_group_name != "" ? var.cloudwatch_log_group_name : "/${var.project_name}/${var.environment}/mt5-adapter"
   ssm_prefix               = "/${var.project_name}/${var.environment}"
+
+  # Runtime PowerShell scripts deployed to C:\nexusquant\bin by the bootstrap document.
+  # CRs are stripped so the here-string embedding is identical regardless of the checkout EOL.
+  runtime_scripts = {
+    "common.ps1"         = replace(file("${path.module}/scripts/common.ps1"), "\r", "")
+    "start-terminal.ps1" = replace(file("${path.module}/scripts/start-terminal.ps1"), "\r", "")
+    "run-adapter.ps1"    = replace(file("${path.module}/scripts/run-adapter.ps1"), "\r", "")
+    "watchdog.ps1"       = replace(file("${path.module}/scripts/watchdog.ps1"), "\r", "")
+  }
 }
 
 resource "tls_private_key" "ec2_windows" {
@@ -89,19 +98,15 @@ resource "aws_iam_role_policy" "ec2_windows_inline" {
         Sid    = "SecretsManagerRead"
         Effect = "Allow"
         Action = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
-        Resource = [
-          var.secret_arn,
-          "${var.secret_arn}*",
-          "arn:aws:secretsmanager:${var.aws_region}:*:secret:*",
-        ]
+        Resource = [var.secret_arn]
       },
       {
         Sid    = "SSMParameterRead"
         Effect = "Allow"
         Action = ["ssm:GetParameter", "ssm:GetParametersByPath"]
         Resource = [
-          "arn:aws:ssm:${var.aws_region}:*:parameter/${var.project_name}/*",
-          "arn:aws:ssm:${var.aws_region}:*:parameter/*",
+          "arn:aws:ssm:${var.aws_region}:*:parameter${local.ssm_prefix}",
+          "arn:aws:ssm:${var.aws_region}:*:parameter${local.ssm_prefix}/*",
         ]
       },
       {
@@ -120,6 +125,9 @@ resource "aws_iam_role_policy" "ec2_windows_inline" {
         Effect   = "Allow"
         Action   = ["cloudwatch:PutMetricData"]
         Resource = "*"
+        Condition = {
+          StringEquals = { "cloudwatch:namespace" = "NexusQuant/MT5" }
+        }
       }
     ]
   })
@@ -169,6 +177,21 @@ resource "aws_ssm_parameter" "cloudwatch_agent_config" {
               file_path       = "C:\\nexusquant\\logs\\mt5_adapter.log"
               log_group_name  = aws_cloudwatch_log_group.adapter.name
               log_stream_name = "{instance_id}-app"
+            },
+            {
+              file_path       = "C:\\nexusquant\\logs\\terminal-supervisor.log"
+              log_group_name  = aws_cloudwatch_log_group.adapter.name
+              log_stream_name = "{instance_id}-terminal-supervisor"
+            },
+            {
+              file_path       = "C:\\nexusquant\\logs\\adapter-supervisor.log"
+              log_group_name  = aws_cloudwatch_log_group.adapter.name
+              log_stream_name = "{instance_id}-adapter-supervisor"
+            },
+            {
+              file_path       = "C:\\nexusquant\\logs\\watchdog.log"
+              log_group_name  = aws_cloudwatch_log_group.adapter.name
+              log_stream_name = "{instance_id}-watchdog"
             }
           ]
         }
@@ -194,7 +217,7 @@ resource "aws_instance" "mt5_adapter" {
 
   root_block_device {
     volume_type           = "gp3"
-    volume_size           = 30
+    volume_size           = var.root_volume_size_gb
     encrypted             = true
     delete_on_termination = true
   }
@@ -210,6 +233,12 @@ resource "aws_instance" "mt5_adapter" {
     Environment = var.environment
     Project     = var.project_name
     Role        = "mt5-adapter"
+  }
+
+  # A newer "most_recent" Windows AMI must never trigger a replacement of a configured instance
+  # (installed terminal, broker login, scheduled tasks). Patch the OS in place instead.
+  lifecycle {
+    ignore_changes = [ami]
   }
 
   depends_on = [
@@ -310,6 +339,7 @@ resource "aws_ssm_document" "bootstrap" {
             "$ErrorActionPreference = 'Stop'",
             "Write-Host '=== Step 1: Installing Prerequisites ==='",
             "New-Item -ItemType Directory -Force -Path 'C:\\nexusquant', 'C:\\nexusquant\\logs' | Out-Null",
+            "try { $max = (Get-PartitionSupportedSize -DriveLetter C).SizeMax; Resize-Partition -DriveLetter C -Size $max -ErrorAction Stop; Write-Host 'C: extended to the full volume size.' } catch { Write-Host 'C: resize skipped (already at max size or not needed).' }",
             "if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {",
             "    Set-ExecutionPolicy Bypass -Scope Process -Force",
             "    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12",
@@ -421,44 +451,28 @@ resource "aws_ssm_document" "bootstrap" {
       },
       {
         action = "aws:runPowerShellScript"
-        name   = "WriteAdapterLauncherScript"
+        name   = "WriteRuntimeScripts"
         inputs = {
-          runCommand = [
-            "$ErrorActionPreference = 'Stop'",
-            "Write-Host '=== Step 6: Writing Adapter Launcher Script ==='",
-            "$RepoDir = 'C:\\nexusquant\\NexusQuant-MT5-Connector'",
-            "$LauncherPath = \"$RepoDir\\fetch_secrets.ps1\"",
-            "$LauncherContent = @\"",
-            "#Requires -Version 5.1",
-            "Set-StrictMode -Version Latest",
-            "`$ErrorActionPreference = 'Stop'",
-            "`$env:PATH = [System.Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH', 'User')",
-            "`$AwsCli = if (Test-Path 'C:\\Program Files\\Amazon\\AWSCLIV2\\aws.exe') { 'C:\\Program Files\\Amazon\\AWSCLIV2\\aws.exe' } else { 'aws' }",
-            "`$Region = '{{ AwsRegion }}'",
-            "`$SecretName = '{{ SecretName }}'",
-            "`$SsmPrefix = '{{ SsmPrefix }}'",
-            "`$RepoDir = '$RepoDir'",
-            "function Set-EnvVar { param([string]`$Name, [string]`$Value) [System.Environment]::SetEnvironmentVariable(`$Name, `$Value, 'Process') }",
-            "try {",
-            "    `$SecretJson = & `$AwsCli secretsmanager get-secret-value --secret-id `$SecretName --region `$Region --query SecretString --output text",
-            "    `$Secrets = `$SecretJson | ConvertFrom-Json",
-            "    Set-EnvVar 'ADAPTER_API_KEY' `$Secrets.ADAPTER_API_KEY",
-            "    Set-EnvVar 'MT5_PASSWORD'    `$Secrets.MT5_PASSWORD",
-            "    Set-EnvVar 'POSTGRES_URL'    `$Secrets.POSTGRES_URL",
-            "    Set-EnvVar 'DATABASE_URL'    `$Secrets.POSTGRES_URL",
-            "} catch { Write-Host 'Error loading secrets: ' `$_; exit 1 }",
-            "try {",
-            "    `$SsmParams = & `$AwsCli ssm get-parameters-by-path --path `$SsmPrefix --region `$Region --query 'Parameters[*].{Name:Name,Value:Value}' --output json | ConvertFrom-Json",
-            "    foreach (`$p in `$SsmParams) { Set-EnvVar (`$p.Name.Split('/')[-1]) `$p.Value }",
-            "} catch { Write-Host 'Error loading SSM params: ' `$_; exit 1 }",
-            "Set-EnvVar 'AWS_EXECUTION_ENV' 'true'",
-            "`$env:PYTHONPATH = \"`$RepoDir\\src\"",
-            "Set-Location `$RepoDir",
-            "& \"`$RepoDir\\.venv\\Scripts\\python.exe\" -m presentation.main *>> 'C:\\nexusquant\\logs\\mt5_adapter_stdout.log'",
-            "\"@",
-            "Set-Content -Path $LauncherPath -Value $LauncherContent -Encoding UTF8",
-            "Write-Host 'Launcher script written to' $LauncherPath"
-          ]
+          runCommand = concat(
+            [
+              "$ErrorActionPreference = 'Stop'",
+              "Write-Host '=== Step 6: Writing runtime scripts (terminal supervisor, adapter supervisor, watchdog) ==='",
+              "New-Item -ItemType Directory -Force -Path 'C:\\nexusquant\\bin', 'C:\\nexusquant\\logs', 'C:\\nexusquant\\mt5' | Out-Null",
+              "$cfg = ConvertTo-Json -InputObject @{ Region = '{{ AwsRegion }}'; SecretName = '{{ SecretName }}'; SsmPrefix = '{{ SsmPrefix }}'; Environment = '${var.environment}'; Project = '${var.project_name}' }",
+              "Set-Content -Path 'C:\\nexusquant\\bin\\config.json' -Value $cfg -Encoding ASCII",
+            ],
+            flatten([
+              for script_name, script_body in local.runtime_scripts : concat(
+                ["$body = @'"],
+                split("\n", script_body),
+                ["'@", "Set-Content -Path 'C:\\nexusquant\\bin\\${script_name}' -Value $body -Encoding UTF8"]
+              )
+            ]),
+            [
+              "Remove-Item -Path 'C:\\nexusquant\\NexusQuant-MT5-Connector\\fetch_secrets.ps1' -Force -ErrorAction SilentlyContinue",
+              "Write-Host 'Runtime scripts written to C:\\nexusquant\\bin'"
+            ]
+          )
         }
       },
       {
@@ -467,20 +481,18 @@ resource "aws_ssm_document" "bootstrap" {
         inputs = {
           runCommand = [
             "$ErrorActionPreference = 'Stop'",
-            "Write-Host '=== Step 7: Configuring Interactive Auto-Logon and Scheduled Tasks (Session 0 fix) ==='",
+            "Write-Host '=== Step 7: Auto-logon and supervised Scheduled Tasks (terminal, adapter, watchdog) ==='",
             "$env:PATH = [System.Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH', 'User')",
-            "$RepoDir = 'C:\\nexusquant\\NexusQuant-MT5-Connector'",
-            "$LauncherPath = \"$RepoDir\\fetch_secrets.ps1\"",
             "$PsExe = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'",
             "$NssmExe = 'C:\\ProgramData\\chocolatey\\bin\\nssm.exe'",
-            "$existingSvc = Get-Service -Name 'MT5Adapter' -ErrorAction SilentlyContinue",
-            "if ($existingSvc) {",
+            "if (Get-Service -Name 'MT5Adapter' -ErrorAction SilentlyContinue) {",
             "    Write-Host 'Removing legacy NSSM service...'",
             "    Stop-Service -Name 'MT5Adapter' -Force -ErrorAction SilentlyContinue",
             "    if (Test-Path $NssmExe) { & $NssmExe remove MT5Adapter confirm }",
             "}",
+            "foreach ($t in 'MT5Watchdog', 'MT5AdapterTask', 'MT5Terminal') { Stop-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue }",
             "Get-Process -Name 'terminal64' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
-            "Get-Process -Name 'powershell', 'python' -ErrorAction SilentlyContinue | Where-Object { $_.Path -like 'C:\\nexusquant\\*' } | Stop-Process -Force -ErrorAction SilentlyContinue",
+            "Get-CimInstance -ClassName Win32_Process -Filter \"Name = 'python.exe'\" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*presentation.main*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
             "Start-Sleep -Seconds 2",
             "try {",
             "    $SecretJson = aws secretsmanager get-secret-value --secret-id '{{ SecretName }}' --region '{{ AwsRegion }}' --query SecretString --output text",
@@ -493,26 +505,43 @@ resource "aws_ssm_document" "bootstrap" {
             "Set-ItemProperty $WinLogonKey 'DefaultUsername' -Value $WinUser",
             "Set-ItemProperty $WinLogonKey 'DefaultPassword' -Value $WinPass",
             "Set-ItemProperty $WinLogonKey 'DefaultDomainName' -Value $env:COMPUTERNAME",
-            "$trigger = New-ScheduledTaskTrigger -AtLogOn -User $WinUser",
-            "$principal = New-ScheduledTaskPrincipal -UserId $WinUser -LogonType Interactive -RunLevel Highest",
-            "Unregister-ScheduledTask -TaskName 'MT5Terminal' -Confirm:$false -ErrorAction SilentlyContinue",
-            "Unregister-ScheduledTask -TaskName 'MT5AdapterTask' -Confirm:$false -ErrorAction SilentlyContinue",
-            "$settingsTerminal = New-ScheduledTaskSettingsSet -Hidden:$false -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries",
-            "$actionTerminal = New-ScheduledTaskAction -Execute 'C:\\Program Files\\MetaTrader 5\\terminal64.exe'",
-            "Register-ScheduledTask -TaskName 'MT5Terminal' -Action $actionTerminal -Trigger $trigger -Principal $principal -Settings $settingsTerminal | Out-Null",
-            "$actionAdapter = New-ScheduledTaskAction -Execute $PsExe -Argument \"-ExecutionPolicy Bypass -NonInteractive -File `\"$LauncherPath`\"\"",
-            "Register-ScheduledTask -TaskName 'MT5AdapterTask' -Action $actionAdapter -Trigger $trigger -Principal $principal | Out-Null",
-            "Write-Host 'Auto-logon and Scheduled Tasks configured. Proceeding to reboot in the next step.'"
+            "# Interactive tasks: no execution time limit (the default is 72h), automatic restart on failure.",
+            "$logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $WinUser",
+            "$userPrincipal = New-ScheduledTaskPrincipal -UserId $WinUser -LogonType Interactive -RunLevel Highest",
+            "$userSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)",
+            "foreach ($t in 'MT5Terminal', 'MT5AdapterTask', 'MT5Watchdog') { Unregister-ScheduledTask -TaskName $t -Confirm:$false -ErrorAction SilentlyContinue }",
+            "$terminalAction = New-ScheduledTaskAction -Execute $PsExe -Argument '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"C:\\nexusquant\\bin\\start-terminal.ps1\"'",
+            "Register-ScheduledTask -TaskName 'MT5Terminal' -Action $terminalAction -Trigger $logonTrigger -Principal $userPrincipal -Settings $userSettings | Out-Null",
+            "$adapterAction = New-ScheduledTaskAction -Execute $PsExe -Argument '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"C:\\nexusquant\\bin\\run-adapter.ps1\"'",
+            "Register-ScheduledTask -TaskName 'MT5AdapterTask' -Action $adapterAction -Trigger $logonTrigger -Principal $userPrincipal -Settings $userSettings | Out-Null",
+            "# Watchdog: every minute as SYSTEM (independent of the interactive session).",
+            "$watchdogTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)",
+            "$watchdogPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest",
+            "$watchdogSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)",
+            "$watchdogAction = New-ScheduledTaskAction -Execute $PsExe -Argument '-NoProfile -ExecutionPolicy Bypass -File \"C:\\nexusquant\\bin\\watchdog.ps1\"'",
+            "Register-ScheduledTask -TaskName 'MT5Watchdog' -Action $watchdogAction -Trigger $watchdogTrigger -Principal $watchdogPrincipal -Settings $watchdogSettings | Out-Null",
+            "Write-Host 'Auto-logon and Scheduled Tasks (MT5Terminal, MT5AdapterTask, MT5Watchdog) configured.'"
           ]
         }
       },
       {
         action = "aws:runPowerShellScript"
-        name   = "RebootInstance"
+        name   = "StartOrRebootInstance"
         inputs = {
           runCommand = [
-            "Write-Host '=== Step 8: Rebooting instance to activate Auto-Logon and Scheduled Tasks ==='",
-            "Write-Host 'Exiting with code 3010: SSM Agent will reboot the instance and resume this document automatically after restart.'",
+            "$ErrorActionPreference = 'Stop'",
+            "Write-Host '=== Step 8: Start tasks now if the interactive session exists, otherwise reboot once ==='",
+            "$WinLogonKey = 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon'",
+            "$WinUser = (Get-ItemProperty $WinLogonKey).DefaultUsername",
+            "$hasSession = [bool](quser 2>$null | Select-String -SimpleMatch $WinUser)",
+            "if ($hasSession) {",
+            "    Write-Host 'Interactive session already present: starting tasks without a reboot (no reboot loop on association re-runs).'",
+            "    Start-ScheduledTask -TaskName 'MT5Terminal'",
+            "    Start-ScheduledTask -TaskName 'MT5AdapterTask'",
+            "    Start-ScheduledTask -TaskName 'MT5Watchdog'",
+            "    exit 0",
+            "}",
+            "Write-Host 'No interactive session yet: exiting with code 3010 so SSM Agent reboots the instance and resumes this document after restart.'",
             "exit 3010"
           ]
         }
@@ -558,14 +587,14 @@ resource "aws_ssm_document" "bootstrap" {
             "    }",
             "    if ($TerminalUp -and $HealthOk) { break }",
             "}",
-            "if (-not $TerminalUp) { Write-Warning 'terminal64.exe was NOT detected running after reboot within timeout — check Scheduled Task MT5Terminal and the auto-logon registry keys.' }",
+            "if (-not $TerminalUp) { Write-Warning 'terminal64.exe was NOT detected running after reboot within timeout — check Scheduled Task MT5Terminal, terminal-supervisor.log and the auto-logon registry keys.' }",
             "if (-not $PortListening) { Write-Warning 'Adapter did NOT bind to TCP port 8100 within timeout — check Scheduled Task MT5AdapterTask and C:\\nexusquant\\logs\\mt5_adapter_stdout.log.' }",
             "if (-not $HealthOk) {",
-            "    Write-Warning 'mt5_connected was not confirmed true. NOTE: this reflects the terminal login/connection state, not the AutoTrading toggle — that still requires one manual click on the terminal after this first post-fix boot.'",
+            "    Write-Warning 'mt5_connected was not confirmed true. AutoTrading is enabled by the startup config (see C:\\nexusquant\\logs\\terminal-supervisor.log and the watchdog log).'",
             "    Write-Host 'Recent adapter stdout log:'",
             "    Get-Content -Path 'C:\\nexusquant\\logs\\mt5_adapter_stdout.log' -Tail 30 -ErrorAction SilentlyContinue | Write-Host",
             "} else {",
-            "    Write-Host 'SUCCESS: terminal64.exe running interactively, Adapter listening on 8100, MT5 connected. Remember: AutoTrading itself still needs one manual click on this first boot after the fix.'",
+            "    Write-Host 'SUCCESS: terminal64.exe running interactively, Adapter listening on 8100, MT5 connected.'",
             "}"
           ]
         }
@@ -644,7 +673,7 @@ resource "aws_ssm_document" "reboot_verify" {
             "if (-not $TerminalUp) { Write-Warning 'terminal64.exe was NOT detected running after reboot within timeout.' }",
             "if (-not $PortListening) { Write-Warning 'Adapter did NOT bind to TCP port 8100 within timeout.' }",
             "if (-not $HealthOk) {",
-            "    Write-Warning 'mt5_connected was not confirmed true. NOTE: AutoTrading still needs one manual click after this first post-fix boot.'",
+            "    Write-Warning 'mt5_connected was not confirmed true. AutoTrading is enabled by the startup config (check terminal-supervisor.log).'",
             "    Get-Content -Path 'C:\\nexusquant\\logs\\mt5_adapter_stdout.log' -Tail 30 -ErrorAction SilentlyContinue | Write-Host",
             "} else {",
             "    Write-Host 'SUCCESS: terminal64.exe running interactively, Adapter listening on 8100, MT5 connected.'",

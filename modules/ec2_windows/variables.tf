@@ -34,9 +34,21 @@ variable "secret_name" {
 }
 
 variable "instance_type" {
-  description = "EC2 instance type for Windows Server."
+  description = "EC2 instance type for Windows Server. Windows Server 2022 + MetaTrader 5 + the adapter need at least 4 GiB RAM (t3.medium or larger)."
   type        = string
-  default     = "t3.micro"
+  default     = "t3.medium"
+}
+
+variable "root_volume_size_gb" {
+  description = "Root EBS volume size in GiB. Windows Server 2022 + MT5 + Python + logs do not fit comfortably in 30 GiB."
+  type        = number
+  default     = 60
+}
+
+variable "alarm_action_arns" {
+  description = "Optional SNS topic ARNs notified when a MT5 health alarm fires or clears. The EC2 auto-recovery action is always attached to the system-status alarm."
+  type        = list(string)
+  default     = []
 }
 
 variable "key_pair_name" {

@@ -36,7 +36,7 @@ mt5_terminal_path     = "C:\\Program Files\\MetaTrader 5\\terminal64.exe"
 mt5_default_deviation = 20
 
 # EC2 Windows
-ec2_instance_type = "t3.micro"
+ec2_instance_type = "t3.medium"
 ec2_key_pair_name = ""
 github_repo_url   = "https://github.com/LorenzoMaraspin/NexusQuant-MT5-Connector.git"
 repo_branch       = "main"

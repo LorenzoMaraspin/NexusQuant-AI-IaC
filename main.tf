@@ -81,6 +81,8 @@ module "ec2_windows" {
   secret_arn                = module.secrets_adapter.secret_arn
   secret_name               = module.secrets_adapter.secret_name
   instance_type             = var.ec2_instance_type
+  root_volume_size_gb       = var.ec2_root_volume_size_gb
+  alarm_action_arns         = var.ec2_alarm_action_arns
   key_pair_name             = var.ec2_key_pair_name
   github_repo_url           = var.github_repo_url
   repo_branch               = var.repo_branch

@@ -211,9 +211,21 @@ variable "log_level_file" {
 # =============================================================================
 
 variable "ec2_instance_type" {
-  description = "EC2 instance type for the Windows machine."
+  description = "EC2 instance type for the Windows machine (Windows Server 2022 + MetaTrader 5 + adapter: t3.medium or larger)."
   type        = string
-  default     = "t3.micro"
+  default     = "t3.medium"
+}
+
+variable "ec2_root_volume_size_gb" {
+  description = "Root EBS volume size (GiB) of the Windows machine."
+  type        = number
+  default     = 60
+}
+
+variable "ec2_alarm_action_arns" {
+  description = "Optional SNS topic ARNs notified by the MT5 adapter health alarms (empty = alarms only, no notification)."
+  type        = list(string)
+  default     = []
 }
 
 variable "ec2_key_pair_name" {

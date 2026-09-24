@@ -2,7 +2,7 @@
 
 Repository dedicata alla gestione centralizzata dell'infrastruttura AWS per l'intera suite **NexusQuant**:
 - **NexusQuant AI Backend**: Container headless singleton per il trading loop algoritmico su AWS ECS Fargate + ECR.
-- **NexusQuant MT5 Connector**: Istanza EC2 Windows Server 2022 con MetaTrader 5 + REST API Adapter FastAPI + NSSM.
+- **NexusQuant MT5 Connector**: Istanza EC2 Windows Server 2022 con MetaTrader 5 + REST API Adapter FastAPI, supervisionati da Scheduled Task (auto-logon) e watchdog.
 - **Database & Storage**: RDS PostgreSQL 16 gp3 per lo storico trade, log e metriche.
 - **Networking & Sicurezza**: VPC dedicata multi-AZ, subnet isolate, NAT Gateway, Security Groups dedicati e gestione credenziali con AWS Secrets Manager & SSM Parameter Store.
 
@@ -68,7 +68,7 @@ NexusQuant-AI-IaC/
     ├── networking/               # VPC, Subnet (pub, win, linux, db), IGW, NAT GW, SGs
     ├── rds/                      # RDS PostgreSQL 16, subnet group, parameter group
     ├── secrets_adapter/          # Secrets Manager + SSM per MT5 Adapter
-    ├── ec2_windows/              # EC2 Windows 2022, IAM role, bootstrap.ps1
+    ├── ec2_windows/              # EC2 Windows 2022, IAM role, SSM bootstrap document, script runtime (`scripts/`), allarmi CloudWatch
     ├── ecr/                      # ECR repository per immagine backend + lifecycle policy
     ├── secrets_backend/          # Secrets Manager + SSM per backend AI
     └── ecs_backend/              # ECS Cluster, Fargate Service, Task Def, IAM, CloudWatch
@@ -83,7 +83,7 @@ NexusQuant-AI-IaC/
 | `modules/networking` | VPC `/16`, subnet pubblica, subnet private (Linux, Windows, DB A/B), Internet Gateway, Elastic IP, NAT Gateway e Security Groups. |
 | `modules/rds` | Istanza PostgreSQL 16 gestita con gp3 cifrato, parameter group personalizzato e log esportati su CloudWatch. |
 | `modules/secrets_adapter` | AWS Secrets Manager (API key, MT5 password, DB credentials) e SSM Parameter Store per l'adapter MT5. |
-| `modules/ec2_windows` | Istanza EC2 Windows Server 2022 con bootstrap automatico (PowerShell) per l'installazione di Python, Git, NSSM e servizio `MT5Adapter`. |
+| `modules/ec2_windows` | Istanza EC2 Windows Server 2022 con bootstrap via SSM Document (Python, Git, MT5, adapter) e tre Scheduled Task: `MT5Terminal` e `MT5AdapterTask` (sessione interattiva con auto-logon, senza limite di esecuzione, riavvio automatico) e `MT5Watchdog` (SYSTEM, ogni minuto: health check, metriche CloudWatch `NexusQuant/MT5`, restart del componente guasto). Allarmi in `alarms.tf`. |
 | `modules/ecr` | Repository ECR con tag immutabili, vulnerabilità scan on push e lifecycle policy per pulizia automatica. |
 | `modules/secrets_backend` | Secrets Manager (`NEWS_CALENDAR_API_KEY`) e parametri SSM per le soglie di rischio FTMO, LLM e parametri di trading. |
 | `modules/ecs_backend` | Cluster ECS Fargate con Container Insights, task definition e servizio singleton (`desired_count = 1`, `deployment_maximum_percent = 100`). |
@@ -191,24 +191,34 @@ Sostituisci `dev` con l'ambiente corretto. Per gli ambienti di sviluppo puoi usa
    - Tramite RDP (se hai valorizzato `rdp_admin_cidr` con il tuo IP pubblico) usando mstsc all'IP `ec2_windows_public_ip`.
    - Tramite **AWS Systems Manager (Session Manager)** dalla console AWS senza dover aprire la porta 3389.
 2. **Login Terminale MT5**:
-   - Il bootstrap (`modules/ec2_windows/bootstrap.ps1`) scarica e installa MetaTrader 5 automaticamente
-     (silenzioso, via `/auto`) da `mt5_installer_url` — non serve più installarlo manualmente via RDP.
-   - Resta comunque necessario un accesso una tantum (RDP o Session Manager) per avviare MetaTrader 5 ed
-     effettuare il primo login con l'account broker / FTMO (server, login, password) e accettare l'EULA:
-     MetaQuotes non espone un modo per automatizzare questo passaggio via riga di comando.
-   - Una volta effettuato il login, il servizio Windows `MT5Adapter` configurato tramite NSSM dialogherà
-     automaticamente con il terminale ad ogni riavvio.
+   - Il bootstrap installa MetaTrader 5 (`mt5_installer_url`, silenzioso via `/auto`).
+   - `MT5Terminal` avvia `terminal64.exe` con un file di configurazione generato a ogni avvio
+     (`C:\nexusquant\mt5\startup.ini`, password letta da Secrets Manager e cancellata dopo 30 s):
+     login/server dell'account broker e `[Experts] Enabled=1, AllowLiveTrading=1` (Algo Trading attivo).
+   - Al primo utilizzo resta consigliato un accesso (RDP o Session Manager) per accettare l'EULA e
+     verificare che `trade_allowed` risulti vero.
+   - L'adapter (`MT5AdapterTask`) attende il terminale, carica secrets/SSM con retry e viene rilanciato
+     con backoff se termina. Il watchdog riavvia terminale e/o adapter dopo 3 controlli falliti
+     (cooldown 5 min).
 3. **Verifica Endpoint**:
    - Dal Fargate backend, l'adapter è raggiungibile all'URL interno privato: `http://<ec2_windows_private_ip>:8100`.
 4. **Monitoraggio Log via CloudWatch** (senza accesso RDP/SSM):
    - Il bootstrap installa e configura l'**Amazon CloudWatch Agent**, che fa il tail continuo dei log
-     dell'adapter (`C:\nexusquant\logs\mt5_adapter_stdout.log` e `...stderr.log`, scritti dal servizio
-     NSSM `MT5Adapter`) e li invia al log group **`/nexusquant/mt5-adapter`** (retention 90 giorni).
+     dell'adapter (`C:\nexusquant\logs\mt5_adapter_stdout.log` e `...stderr.log`, più i log dei supervisor
+     `terminal-supervisor.log`, `adapter-supervisor.log` e del `watchdog.log`) e li invia al log group **`/nexusquant/mt5-adapter`** (retention 90 giorni).
    - Consultabili dalla console AWS in *CloudWatch → Log groups → /nexusquant/mt5-adapter*, con due log
      stream per istanza (`<instance-id>-stdout` e `<instance-id>-stderr`), oppure via CLI:
      `aws logs tail /nexusquant/mt5-adapter --follow --region <aws_region>`.
    - Il log di bootstrap (Chocolatey, MT5, cloning, ecc.) va invece in **`/nexusquant/ec2-bootstrap`**
      (un solo upload a fine provisioning, non continuo).
+5. **Allarmi e metriche** (`modules/ec2_windows/alarms.tf`): namespace `NexusQuant/MT5` (AdapterHealthy,
+   TerminalRunning, Mt5Connected, InteractiveSession, TradeAllowed, MemAvailableMB, DiskFreeGB). Per ricevere
+   notifiche valorizza `ec2_alarm_action_arns` con uno o più topic SNS; il recover automatico dell'istanza
+   (system status check) è sempre attivo.
+6. **Applicare le modifiche al bootstrap su un'istanza esistente**: `terraform apply`, poi rilancia
+   l'associazione (`aws ssm start-associations-once --association-ids <id>`) o esegui il documento
+   `<project>-mt5-bootstrap-<env>` con `aws ssm send-command`. Lo step finale riavvia l'istanza solo se non
+   esiste già una sessione interattiva (nessun reboot loop).
 
 ---
 
