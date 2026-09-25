@@ -65,6 +65,8 @@ module "secrets_adapter" {
   log_level_console           = var.log_level_console
   log_level_file              = var.log_level_file
   github_token                = var.github_token
+   windows_admin_user         = var.windows_admin_user
+  windows_admin_password      = var.windows_admin_password
 }
 
 # --------------------------------------------------------------------------- #

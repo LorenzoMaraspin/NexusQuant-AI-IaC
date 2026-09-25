@@ -33,6 +33,17 @@ variable "mt5_password" {
   sensitive   = true
 }
 
+variable "windows_admin_user" {
+  type        = string
+  description = "Local Windows admin username for EC2 auto-logon (interactive session for MT5)"
+}
+
+variable "windows_admin_password" {
+  type        = string
+  description = "Local Windows admin password for EC2 auto-logon"
+  sensitive   = true
+}
+
 variable "db_username" {
   description = "RDS PostgreSQL master username."
   type        = string

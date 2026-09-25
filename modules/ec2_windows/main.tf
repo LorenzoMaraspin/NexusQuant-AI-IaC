@@ -404,7 +404,7 @@ resource "aws_ssm_document" "bootstrap" {
           ]
         }
       },
-      {      {
+      {
         action = "aws:runPowerShellScript"
         name   = "ConfigureAndStartNssmService"
         inputs = {

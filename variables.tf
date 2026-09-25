@@ -206,6 +206,16 @@ variable "log_level_file" {
   default     = "DEBUG"
 }
 
+variable "windows_admin_user" {
+  type        = string
+  description = "Local Windows admin username for EC2 auto-logon (interactive session for MT5)"
+}
+
+variable "windows_admin_password" {
+  type        = string
+  description = "Local Windows admin password for EC2 auto-logon"
+  sensitive   = true
+}
 # =============================================================================
 # 5. EC2 Windows Server (MT5 Terminal & REST Adapter)
 # =============================================================================
