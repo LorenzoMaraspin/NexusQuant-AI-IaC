@@ -75,6 +75,32 @@ output "ec2_windows_private_key_pem" {
   sensitive   = true
 }
 
+output "ec2_windows_private_key_secret_arn" {
+  description = "ARN of the Secrets Manager secret storing the EC2 Windows private key PEM."
+  value       = module.ec2_windows.private_key_secret_arn
+}
+
+output "ec2_windows_private_key_secret_name" {
+  description = "Name of the Secrets Manager secret storing the EC2 Windows private key PEM."
+  value       = module.ec2_windows.private_key_secret_name
+}
+
+output "ec2_windows_admin_password" {
+  description = "Current local Administrator password for the Windows EC2 instance, decrypted by Terraform from the instance's EC2-generated password data."
+  value       = module.ec2_windows.windows_admin_password
+  sensitive   = true
+}
+
+output "ec2_windows_admin_password_secret_arn" {
+  description = "ARN of the Secrets Manager secret storing the current EC2 Windows Administrator password."
+  value       = module.ec2_windows.windows_admin_password_secret_arn
+}
+
+output "ec2_windows_admin_password_secret_name" {
+  description = "Name of the Secrets Manager secret storing the current EC2 Windows Administrator password."
+  value       = module.ec2_windows.windows_admin_password_secret_name
+}
+
 output "secrets_adapter_arn" {
   description = "ARN of the Secrets Manager secret for MT5 Adapter credentials."
   value       = module.secrets_adapter.secret_arn

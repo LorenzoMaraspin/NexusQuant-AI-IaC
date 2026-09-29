@@ -57,6 +57,19 @@ variable "key_pair_name" {
   default     = ""
 }
 
+variable "private_key_secret_recovery_window_days" {
+  description = "Days before the deleted EC2 private-key Secrets Manager secret is permanently removed (0 = force delete immediately, needed to freely recreate the key pair under the same name)."
+  type        = number
+  default     = 0
+}
+
+variable "windows_admin_password_override" {
+  description = "Local Administrator password to use only when key_pair_name references an existing, externally-managed key pair (Terraform then has no private key in state to decrypt the instance's real password with). Ignored when key_pair_name is empty, since the actual password is decrypted automatically in that case."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "github_repo_url" {
   description = "Git clone URL of the MT5 connector repository."
   type        = string

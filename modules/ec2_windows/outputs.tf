@@ -29,6 +29,32 @@ output "private_key_pem" {
   sensitive   = true
 }
 
+output "private_key_secret_arn" {
+  description = "ARN of the Secrets Manager secret holding the private key PEM (null when reusing an existing key pair)."
+  value       = var.key_pair_name == "" ? aws_secretsmanager_secret.ec2_windows_private_key[0].arn : null
+}
+
+output "private_key_secret_name" {
+  description = "Name of the Secrets Manager secret holding the private key PEM (null when reusing an existing key pair)."
+  value       = var.key_pair_name == "" ? aws_secretsmanager_secret.ec2_windows_private_key[0].name : null
+}
+
+output "windows_admin_password" {
+  description = "Current local Administrator password for the Windows EC2 instance, decrypted by Terraform from the instance's EC2-generated password data. Sensitive and kept in Terraform state."
+  value       = var.key_pair_name == "" ? local.effective_windows_admin_password : null
+  sensitive   = true
+}
+
+output "windows_admin_password_secret_arn" {
+  description = "ARN of the Secrets Manager secret holding the current local Administrator password (null when reusing an existing key pair)."
+  value       = var.key_pair_name == "" ? aws_secretsmanager_secret.windows_admin_password[0].arn : null
+}
+
+output "windows_admin_password_secret_name" {
+  description = "Name of the Secrets Manager secret holding the current local Administrator password (null when reusing an existing key pair)."
+  value       = var.key_pair_name == "" ? aws_secretsmanager_secret.windows_admin_password[0].name : null
+}
+
 output "cloudwatch_log_group_name" {
   description = "Name of the CloudWatch log group for the EC2 instance and MT5 adapter."
   value       = aws_cloudwatch_log_group.adapter.name

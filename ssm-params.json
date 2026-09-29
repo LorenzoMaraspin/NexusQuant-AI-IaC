@@ -1,0 +1,3 @@
+{
+  "commands": ["(Select-String -Path C:\\nexusquant\\bin\\watchdog.ps1 -Pattern 'ticksResponsive').Count"]
+}

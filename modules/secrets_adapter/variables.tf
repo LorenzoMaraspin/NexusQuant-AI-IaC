@@ -66,6 +66,16 @@ variable "mt5_server" {
   type        = string
 }
 
+variable "windows_admin_user" {
+  description = "Windows administrator user for the EC2 instance."
+  type        = string
+}
+
+variable "windows_admin_password" {
+  description = "Windows administrator password for the EC2 instance."
+  type        = string
+}
+
 variable "mt5_terminal_path" {
   description = "Path to terminal64.exe on the Windows EC2 instance."
   type        = string

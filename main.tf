@@ -65,6 +65,8 @@ module "secrets_adapter" {
   log_level_console           = var.log_level_console
   log_level_file              = var.log_level_file
   github_token                = var.github_token
+  windows_admin_user          = var.windows_admin_user
+  windows_admin_password      = var.windows_admin_password
 }
 
 # --------------------------------------------------------------------------- #
@@ -73,22 +75,23 @@ module "secrets_adapter" {
 module "ec2_windows" {
   source = "./modules/ec2_windows"
 
-  project_name              = var.project_name
-  environment               = var.environment
-  aws_region                = var.aws_region
-  subnet_id                 = module.networking.subnet_public_id
-  sg_windows_adapter_id     = module.networking.sg_windows_adapter_id
-  secret_arn                = module.secrets_adapter.secret_arn
-  secret_name               = module.secrets_adapter.secret_name
-  instance_type             = var.ec2_instance_type
-  root_volume_size_gb       = var.ec2_root_volume_size_gb
-  alarm_action_arns         = var.ec2_alarm_action_arns
-  key_pair_name             = var.ec2_key_pair_name
-  github_repo_url           = var.github_repo_url
-  repo_branch               = var.repo_branch
-  mt5_installer_url         = var.mt5_installer_url
-  log_retention_days        = var.ec2_log_retention_days
-  cloudwatch_log_group_name = var.ec2_cloudwatch_log_group_name
+  project_name                             = var.project_name
+  environment                              = var.environment
+  aws_region                               = var.aws_region
+  subnet_id                                = module.networking.subnet_public_id
+  sg_windows_adapter_id                    = module.networking.sg_windows_adapter_id
+  secret_arn                               = module.secrets_adapter.secret_arn
+  secret_name                              = module.secrets_adapter.secret_name
+  instance_type                            = var.ec2_instance_type
+  root_volume_size_gb                      = var.ec2_root_volume_size_gb
+  alarm_action_arns                        = var.ec2_alarm_action_arns
+  key_pair_name                            = var.ec2_key_pair_name
+  private_key_secret_recovery_window_days  = var.secret_recovery_window_days
+  github_repo_url                          = var.github_repo_url
+  repo_branch                              = var.repo_branch
+  mt5_installer_url                        = var.mt5_installer_url
+  log_retention_days                       = var.ec2_log_retention_days
+  cloudwatch_log_group_name                = var.ec2_cloudwatch_log_group_name
 }
 
 # --------------------------------------------------------------------------- #

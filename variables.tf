@@ -206,6 +206,15 @@ variable "log_level_file" {
   default     = "DEBUG"
 }
 
+variable "windows_admin_user" {
+  description = "Windows administrator user for the EC2 instance."
+  type        = string
+}
+
+variable "windows_admin_password" {
+  description = "Windows administrator password for the EC2 instance."
+  type        = string
+}
 # =============================================================================
 # 5. EC2 Windows Server (MT5 Terminal & REST Adapter)
 # =============================================================================

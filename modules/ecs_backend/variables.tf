@@ -110,7 +110,7 @@ variable "bedrock_region" {
 }
 
 variable "bedrock_model_ids" {
-  description = "Bedrock foundation model IDs the ECS task role is allowed to invoke (e.g. \"amazon.nova-lite-v1:0\"). The IAM policy is scoped to exactly these model ARNs — never bedrock:* on Resource \"*\". Leave empty to skip creating the policy (e.g. when LLM_PROVIDER=ollama and Bedrock is not used)."
+  description = "Bedrock foundation model IDs the ECS task role is allowed to invoke (e.g. \"amazon.nova-lite-v1:0\") or cross-region inference profile IDs (e.g. \"eu.amazon.nova-lite-v1:0\" — the policy then also grants the inference-profile ARN and the wildcard-region foundation-model ARN). The IAM policy is scoped to exactly these models — never bedrock:* on Resource \"*\". Leave empty to skip creating the policy (e.g. when LLM_PROVIDER=ollama and Bedrock is not used)."
   type        = list(string)
   default     = []
 }

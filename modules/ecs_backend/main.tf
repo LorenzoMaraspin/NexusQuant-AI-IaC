@@ -166,6 +166,47 @@ resource "aws_iam_role_policy" "ecs_task_exec" {
   })
 }
 
+locals {
+  # Cross-region inference profile IDs carry a geo prefix (eu., us., apac., global.).
+  # Converse/InvokeModel on such an ID needs BOTH:
+  #   1) the inference-profile ARN in the caller's region/account, and
+  #   2) the underlying foundation-model ARN in ANY region (the profile routes
+  #      the request to whichever region of the group serves it).
+  # Plain foundation model IDs only need the regional foundation-model ARN.
+  bedrock_profile_prefix_regex = "^(eu|us|us-gov|apac|global)\\."
+
+  bedrock_profile_ids = [
+    for id in var.bedrock_model_ids : id
+    if can(regex(local.bedrock_profile_prefix_regex, id))
+  ]
+
+  bedrock_base_model_ids = distinct([
+    for id in var.bedrock_model_ids :
+    replace(id, "/${local.bedrock_profile_prefix_regex}/", "")
+  ])
+
+  bedrock_direct_model_ids = [
+    for id in var.bedrock_model_ids : id
+    if !can(regex(local.bedrock_profile_prefix_regex, id))
+  ]
+
+  bedrock_resources = concat(
+    [
+      for id in local.bedrock_profile_ids :
+      "arn:aws:bedrock:${var.bedrock_region}:${data.aws_caller_identity.current.account_id}:inference-profile/${id}"
+    ],
+    [
+      for id in local.bedrock_direct_model_ids :
+      "arn:aws:bedrock:${var.bedrock_region}::foundation-model/${id}"
+    ],
+    [
+      for id in local.bedrock_base_model_ids :
+      "arn:aws:bedrock:*::foundation-model/${id}"
+      if length(local.bedrock_profile_ids) > 0
+    ],
+  )
+}
+
 resource "aws_iam_role_policy" "ecs_task_bedrock" {
   count = length(var.bedrock_model_ids) > 0 ? 1 : 0
 
@@ -174,7 +215,9 @@ resource "aws_iam_role_policy" "ecs_task_bedrock" {
 
   # Scoped to the exact approved model IDs — never "bedrock:*" on
   # Resource "*". Update var.bedrock_model_ids to change which models
-  # the LLM agent nodes are allowed to invoke in production.
+  # the LLM agent nodes are allowed to invoke in production. IDs with a
+  # geo prefix (e.g. "eu.amazon.nova-lite-v1:0") automatically get the
+  # inference-profile ARN plus the wildcard-region foundation-model ARN.
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -184,10 +227,7 @@ resource "aws_iam_role_policy" "ecs_task_bedrock" {
         "bedrock:InvokeModel",
         "bedrock:InvokeModelWithResponseStream"
       ]
-      Resource = [
-        for model_id in var.bedrock_model_ids :
-        "arn:aws:bedrock:${var.bedrock_region}::foundation-model/${model_id}"
-      ]
+      Resource = local.bedrock_resources
     }]
   })
 }

@@ -1,6 +1,12 @@
 ###############################################################################
-# CloudWatch alarms for the MT5 adapter EC2 instance
-# Metrics in namespace NexusQuant/MT5 are published every minute by watchdog.ps1.
+# CloudWatch alarms for the MT5 adapter EC2 instance.
+#
+# Only the EC2 system-status-check alarm remains: the NexusQuant/MT5 custom
+# metrics (AdapterHealthy, TradeAllowed, MemAvailableMB, DiskFreeGB, ...) were
+# published by watchdog.ps1, which was removed when the instance moved back
+# to a manual start (RDP in, run C:\nexusquant\bin\start.ps1) with no
+# auto-logon, scheduled tasks or self-healing supervision. Re-add alarms here
+# if a supervisor script publishing those metrics comes back.
 ###############################################################################
 
 # Instance-level hardware/system failure: automatic recovery onto healthy hardware.
@@ -21,113 +27,6 @@ resource "aws_cloudwatch_metric_alarm" "instance_system_check" {
   }
 
   alarm_actions = concat(["arn:aws:automate:${var.aws_region}:ec2:recover"], var.alarm_action_arns)
-  ok_actions    = var.alarm_action_arns
-
-  tags = {
-    Environment = var.environment
-    Project     = var.project_name
-  }
-}
-
-# Terminal down or disconnected / adapter unresponsive for 5 consecutive minutes.
-# Missing data counts as breaching: a dead watchdog or instance must also alarm.
-resource "aws_cloudwatch_metric_alarm" "adapter_unhealthy" {
-  alarm_name          = "${var.project_name}-${var.environment}-mt5-adapter-unhealthy"
-  alarm_description   = "MT5 terminal not running/connected or adapter not answering /health for 5 minutes."
-  namespace           = "NexusQuant/MT5"
-  metric_name         = "AdapterHealthy"
-  statistic           = "Minimum"
-  period              = 60
-  evaluation_periods  = 5
-  datapoints_to_alarm = 5
-  threshold           = 1
-  comparison_operator = "LessThanThreshold"
-  treat_missing_data  = "breaching"
-
-  dimensions = {
-    Environment = var.environment
-  }
-
-  alarm_actions = var.alarm_action_arns
-  ok_actions    = var.alarm_action_arns
-
-  tags = {
-    Environment = var.environment
-    Project     = var.project_name
-  }
-}
-
-# AutoTrading disabled in the terminal (only published when the adapter exposes trade_allowed).
-resource "aws_cloudwatch_metric_alarm" "autotrading_disabled" {
-  alarm_name          = "${var.project_name}-${var.environment}-mt5-autotrading-disabled"
-  alarm_description   = "MT5 reports trade_allowed=false for 5 minutes: orders would be rejected."
-  namespace           = "NexusQuant/MT5"
-  metric_name         = "TradeAllowed"
-  statistic           = "Minimum"
-  period              = 60
-  evaluation_periods  = 5
-  datapoints_to_alarm = 5
-  threshold           = 1
-  comparison_operator = "LessThanThreshold"
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    Environment = var.environment
-  }
-
-  alarm_actions = var.alarm_action_arns
-  ok_actions    = var.alarm_action_arns
-
-  tags = {
-    Environment = var.environment
-    Project     = var.project_name
-  }
-}
-
-# Resource exhaustion on the Windows host (the usual cause of an adapter that hangs).
-resource "aws_cloudwatch_metric_alarm" "low_memory" {
-  alarm_name          = "${var.project_name}-${var.environment}-mt5-low-memory"
-  alarm_description   = "Less than 300 MB of free RAM on the MT5 adapter host for 5 minutes."
-  namespace           = "NexusQuant/MT5"
-  metric_name         = "MemAvailableMB"
-  statistic           = "Minimum"
-  period              = 60
-  evaluation_periods  = 5
-  datapoints_to_alarm = 5
-  threshold           = 300
-  comparison_operator = "LessThanThreshold"
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    Environment = var.environment
-  }
-
-  alarm_actions = var.alarm_action_arns
-  ok_actions    = var.alarm_action_arns
-
-  tags = {
-    Environment = var.environment
-    Project     = var.project_name
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "low_disk" {
-  alarm_name          = "${var.project_name}-${var.environment}-mt5-low-disk"
-  alarm_description   = "Less than 5 GB free on C: of the MT5 adapter host."
-  namespace           = "NexusQuant/MT5"
-  metric_name         = "DiskFreeGB"
-  statistic           = "Minimum"
-  period              = 300
-  evaluation_periods  = 2
-  threshold           = 5
-  comparison_operator = "LessThanThreshold"
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    Environment = var.environment
-  }
-
-  alarm_actions = var.alarm_action_arns
   ok_actions    = var.alarm_action_arns
 
   tags = {

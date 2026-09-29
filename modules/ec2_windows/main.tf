@@ -31,10 +31,8 @@ locals {
   # Runtime PowerShell scripts deployed to C:\nexusquant\bin by the bootstrap document.
   # CRs are stripped so the here-string embedding is identical regardless of the checkout EOL.
   runtime_scripts = {
-    "common.ps1"         = replace(file("${path.module}/scripts/common.ps1"), "\r", "")
-    "start-terminal.ps1" = replace(file("${path.module}/scripts/start-terminal.ps1"), "\r", "")
-    "run-adapter.ps1"    = replace(file("${path.module}/scripts/run-adapter.ps1"), "\r", "")
-    "watchdog.ps1"       = replace(file("${path.module}/scripts/watchdog.ps1"), "\r", "")
+    "common.ps1" = replace(file("${path.module}/scripts/common.ps1"), "\r", "")
+    "start.ps1"  = replace(file("${path.module}/scripts/start.ps1"), "\r", "")
   }
 }
 
@@ -54,6 +52,29 @@ resource "aws_key_pair" "ec2_windows" {
     Environment = var.environment
     Project     = var.project_name
   }
+}
+
+# --- Secrets Manager: private key PEM for the auto-generated key pair ---
+# Only created when Terraform manages the key pair itself (key_pair_name == "").
+# recovery_window_in_days is controlled by var.private_key_secret_recovery_window_days
+# so the secret can be force-deleted immediately when the key pair is recreated.
+resource "aws_secretsmanager_secret" "ec2_windows_private_key" {
+  count                   = var.key_pair_name == "" ? 1 : 0
+  name                    = "/${var.project_name}/${var.environment}/ec2-windows/private-key"
+  description             = "PEM private key for the auto-generated EC2 Windows (MT5 Adapter) key pair '${local.effective_key_pair_name}'."
+  recovery_window_in_days = var.private_key_secret_recovery_window_days
+
+  tags = {
+    Name        = "${var.project_name}-ec2-windows-private-key-${var.environment}"
+    Environment = var.environment
+    Project     = var.project_name
+  }
+}
+
+resource "aws_secretsmanager_secret_version" "ec2_windows_private_key" {
+  count         = var.key_pair_name == "" ? 1 : 0
+  secret_id     = aws_secretsmanager_secret.ec2_windows_private_key[0].id
+  secret_string = tls_private_key.ec2_windows[0].private_key_pem
 }
 
 # --- IAM Role for the EC2 instance ---
@@ -95,9 +116,9 @@ resource "aws_iam_role_policy" "ec2_windows_inline" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "SecretsManagerRead"
-        Effect = "Allow"
-        Action = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+        Sid      = "SecretsManagerRead"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
         Resource = [var.secret_arn]
       },
       {
@@ -179,19 +200,9 @@ resource "aws_ssm_parameter" "cloudwatch_agent_config" {
               log_stream_name = "{instance_id}-app"
             },
             {
-              file_path       = "C:\\nexusquant\\logs\\terminal-supervisor.log"
+              file_path       = "C:\\nexusquant\\logs\\start.log"
               log_group_name  = aws_cloudwatch_log_group.adapter.name
-              log_stream_name = "{instance_id}-terminal-supervisor"
-            },
-            {
-              file_path       = "C:\\nexusquant\\logs\\adapter-supervisor.log"
-              log_group_name  = aws_cloudwatch_log_group.adapter.name
-              log_stream_name = "{instance_id}-adapter-supervisor"
-            },
-            {
-              file_path       = "C:\\nexusquant\\logs\\watchdog.log"
-              log_group_name  = aws_cloudwatch_log_group.adapter.name
-              log_stream_name = "{instance_id}-watchdog"
+              log_stream_name = "{instance_id}-start"
             }
           ]
         }
@@ -214,6 +225,12 @@ resource "aws_instance" "mt5_adapter" {
   iam_instance_profile        = aws_iam_instance_profile.ec2_windows.name
   key_name                    = var.key_pair_name != "" ? var.key_pair_name : aws_key_pair.ec2_windows[0].key_name
   associate_public_ip_address = true
+
+  # Needed so Terraform can decrypt the EC2-generated local Administrator
+  # password below (get_password_data exposes the encrypted blob; it stays
+  # encrypted at rest in state — only the decrypted local value derived from
+  # it is written out, into its own Secrets Manager secret).
+  get_password_data = true
 
   root_block_device {
     volume_type           = "gp3"
@@ -246,6 +263,61 @@ resource "aws_instance" "mt5_adapter" {
   ]
 }
 
+# --- Secrets Manager: decrypted local Administrator password ---
+# EC2 assigns a fresh random Administrator password to every new Windows
+# instance and only exposes it encrypted with the launch key pair's public
+# key. Whenever this instance (or just the key pair) is recreated, that
+# password changes and any previously stored value goes stale — which is
+# exactly the failure mode of relying on a fixed tfvars password for
+# AutoAdminLogon. Terraform decrypts it here with the private key it already
+# holds in state (rsadecrypt), so the value used below is always the
+# instance's real, current password with no manual "RDP in with the
+# console-decrypted password and reset it by hand" step required.
+locals {
+  # AWS only starts returning GetPasswordData once EC2Launch has generated it
+  # inside the guest, which can lag a few minutes behind instance creation.
+  # It's also a known AWS-provider quirk that flipping get_password_data on
+  # an ALREADY-EXISTING instance (rather than at Create time, which has its
+  # own wait/retry loop) does not always refresh password_data within that
+  # same apply — the attribute can still read back as "" once. Guard on that
+  # here instead of feeding an empty string into rsadecrypt(), which fails
+  # with an opaque "crypto/rsa: decryption error." Re-running `terraform
+  # apply` a second time resolves it: by then the resource has been
+  # refreshed and password_data is populated.
+  windows_password_data_ready      = aws_instance.mt5_adapter.password_data != ""
+  effective_windows_admin_password = var.key_pair_name == "" ? (
+    local.windows_password_data_ready
+    ? rsadecrypt(aws_instance.mt5_adapter.password_data, tls_private_key.ec2_windows[0].private_key_pem)
+    : null
+  ) : var.windows_admin_password_override
+}
+
+resource "aws_secretsmanager_secret" "windows_admin_password" {
+  count                   = var.key_pair_name == "" ? 1 : 0
+  name                    = "/${var.project_name}/${var.environment}/ec2-windows/admin-password"
+  description             = "Current local Administrator password for the Windows EC2 instance, decrypted by Terraform from the instance's EC2-generated password data. Refreshes automatically whenever the instance or key pair is recreated."
+  recovery_window_in_days = var.private_key_secret_recovery_window_days
+
+  tags = {
+    Name        = "${var.project_name}-ec2-windows-admin-password-${var.environment}"
+    Environment = var.environment
+    Project     = var.project_name
+  }
+}
+
+resource "aws_secretsmanager_secret_version" "windows_admin_password" {
+  count         = var.key_pair_name == "" ? 1 : 0
+  secret_id     = aws_secretsmanager_secret.windows_admin_password[0].id
+  secret_string = var.key_pair_name == "" ? coalesce(local.effective_windows_admin_password, "pending-terraform-apply") : var.windows_admin_password_override
+
+  lifecycle {
+    precondition {
+      condition     = var.key_pair_name != "" || local.windows_password_data_ready
+      error_message = "EC2 has not published the Windows password data for this instance yet (password_data is still empty) — this is normal for a minute or two after get_password_data is first enabled or after the instance is recreated. Re-run 'terraform apply' again; it resolves itself once AWS finishes generating it."
+    }
+  }
+}
+
 # --- SSM Associations: Native CloudWatch Agent Install & Configure ---
 
 resource "aws_ssm_association" "install_cloudwatch_agent" {
@@ -260,6 +332,15 @@ resource "aws_ssm_association" "install_cloudwatch_agent" {
     key    = "InstanceIds"
     values = [aws_instance.mt5_adapter.id]
   }
+
+  # Retries on a fixed cadence rather than only once at creation. Terraform's
+  # depends_on below only orders resource CREATION in the AWS API — it does not
+  # wait for the SSM Agent to actually check in and finish installing the
+  # package on a freshly launched instance, so the very first run of the
+  # "configure" association below can race ahead of this one and fail with
+  # "CloudWatch Agent not installed". The schedule makes both associations
+  # self-heal on the next pass once the agent has had time to come online.
+  schedule_expression = "rate(30 minutes)"
 
   depends_on = [
     aws_instance.mt5_adapter
@@ -281,6 +362,13 @@ resource "aws_ssm_association" "configure_cloudwatch_agent" {
     key    = "InstanceIds"
     values = [aws_instance.mt5_adapter.id]
   }
+
+  # See the comment on install_cloudwatch_agent: this recurring schedule is
+  # what actually recovers from the "ControlCloudWatchAgentWindows: CloudWatch
+  # Agent not installed" failure seen right after a fresh instance boot — the
+  # next scheduled run (at most 30 min later) succeeds once the package
+  # install above has completed, no manual retry needed.
+  schedule_expression = "rate(30 minutes)"
 
   depends_on = [
     aws_ssm_association.install_cloudwatch_agent,
@@ -424,6 +512,7 @@ resource "aws_ssm_document" "bootstrap" {
           runCommand = [
             "$ErrorActionPreference = 'Stop'",
             "Write-Host '=== Step 4: Setting up Python Virtualenv ==='",
+            "$env:PATH = [System.Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH', 'User')",
             "$RepoDir = 'C:\\nexusquant\\NexusQuant-MT5-Connector'",
             "Push-Location $RepoDir",
             "if (-not (Test-Path '.venv')) { python -m venv .venv }",
@@ -451,12 +540,30 @@ resource "aws_ssm_document" "bootstrap" {
       },
       {
         action = "aws:runPowerShellScript"
+        name   = "RemoveLegacyAutomation"
+        inputs = {
+          runCommand = [
+            "$ErrorActionPreference = 'Continue'",
+            "Write-Host '=== Step 6: Removing legacy auto-logon / scheduled tasks / supervisor scripts, if present ==='",
+            "foreach ($t in 'MT5Watchdog', 'MT5AdapterTask', 'MT5Terminal') { Stop-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName $t -Confirm:$false -ErrorAction SilentlyContinue }",
+            "Get-Process -Name 'terminal64' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
+            "Get-CimInstance -ClassName Win32_Process -Filter \"Name = 'python.exe'\" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*presentation.main*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+            "$WinLogonKey = 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon'",
+            "Remove-ItemProperty -Path $WinLogonKey -Name 'AutoAdminLogon' -ErrorAction SilentlyContinue",
+            "Remove-ItemProperty -Path $WinLogonKey -Name 'DefaultPassword' -ErrorAction SilentlyContinue",
+            "Remove-Item -Path 'C:\\nexusquant\\bin\\watchdog.ps1', 'C:\\nexusquant\\bin\\run-adapter.ps1', 'C:\\nexusquant\\bin\\start-terminal.ps1' -Force -ErrorAction SilentlyContinue",
+            "Write-Host 'Legacy automation removed (if it was present). AutoAdminLogon disabled; the plaintext DefaultPassword registry value has been cleared.'"
+          ]
+        }
+      },
+      {
+        action = "aws:runPowerShellScript"
         name   = "WriteRuntimeScripts"
         inputs = {
           runCommand = concat(
             [
               "$ErrorActionPreference = 'Stop'",
-              "Write-Host '=== Step 6: Writing runtime scripts (terminal supervisor, adapter supervisor, watchdog) ==='",
+              "Write-Host '=== Step 7: Writing runtime scripts (common.ps1, start.ps1) ==='",
               "New-Item -ItemType Directory -Force -Path 'C:\\nexusquant\\bin', 'C:\\nexusquant\\logs', 'C:\\nexusquant\\mt5' | Out-Null",
               "$cfg = ConvertTo-Json -InputObject @{ Region = '{{ AwsRegion }}'; SecretName = '{{ SecretName }}'; SsmPrefix = '{{ SsmPrefix }}'; Environment = '${var.environment}'; Project = '${var.project_name}' }",
               "Set-Content -Path 'C:\\nexusquant\\bin\\config.json' -Value $cfg -Encoding ASCII",
@@ -477,207 +584,12 @@ resource "aws_ssm_document" "bootstrap" {
       },
       {
         action = "aws:runPowerShellScript"
-        name   = "ConfigureAutoLogonAndScheduledTasks"
+        name   = "BootstrapComplete"
         inputs = {
           runCommand = [
-            "$ErrorActionPreference = 'Stop'",
-            "Write-Host '=== Step 7: Auto-logon and supervised Scheduled Tasks (terminal, adapter, watchdog) ==='",
-            "$env:PATH = [System.Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH', 'User')",
-            "$PsExe = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'",
-            "$NssmExe = 'C:\\ProgramData\\chocolatey\\bin\\nssm.exe'",
-            "if (Get-Service -Name 'MT5Adapter' -ErrorAction SilentlyContinue) {",
-            "    Write-Host 'Removing legacy NSSM service...'",
-            "    Stop-Service -Name 'MT5Adapter' -Force -ErrorAction SilentlyContinue",
-            "    if (Test-Path $NssmExe) { & $NssmExe remove MT5Adapter confirm }",
-            "}",
-            "foreach ($t in 'MT5Watchdog', 'MT5AdapterTask', 'MT5Terminal') { Stop-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue }",
-            "Get-Process -Name 'terminal64' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
-            "Get-CimInstance -ClassName Win32_Process -Filter \"Name = 'python.exe'\" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*presentation.main*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
-            "Start-Sleep -Seconds 2",
-            "try {",
-            "    $SecretJson = aws secretsmanager get-secret-value --secret-id '{{ SecretName }}' --region '{{ AwsRegion }}' --query SecretString --output text",
-            "    $Secrets = $SecretJson | ConvertFrom-Json",
-            "    $WinUser = $Secrets.WINDOWS_ADMIN_USER",
-            "    $WinPass = $Secrets.WINDOWS_ADMIN_PASSWORD",
-            "} catch { Write-Host 'ERROR loading Windows admin credentials: ' $_; exit 1 }",
-            "$WinLogonKey = 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon'",
-            "Set-ItemProperty $WinLogonKey 'AutoAdminLogon' -Value '1'",
-            "Set-ItemProperty $WinLogonKey 'DefaultUsername' -Value $WinUser",
-            "Set-ItemProperty $WinLogonKey 'DefaultPassword' -Value $WinPass",
-            "Set-ItemProperty $WinLogonKey 'DefaultDomainName' -Value $env:COMPUTERNAME",
-            "# Interactive tasks: no execution time limit (the default is 72h), automatic restart on failure.",
-            "$logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $WinUser",
-            "$userPrincipal = New-ScheduledTaskPrincipal -UserId $WinUser -LogonType Interactive -RunLevel Highest",
-            "$userSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)",
-            "foreach ($t in 'MT5Terminal', 'MT5AdapterTask', 'MT5Watchdog') { Unregister-ScheduledTask -TaskName $t -Confirm:$false -ErrorAction SilentlyContinue }",
-            "$terminalAction = New-ScheduledTaskAction -Execute $PsExe -Argument '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"C:\\nexusquant\\bin\\start-terminal.ps1\"'",
-            "Register-ScheduledTask -TaskName 'MT5Terminal' -Action $terminalAction -Trigger $logonTrigger -Principal $userPrincipal -Settings $userSettings | Out-Null",
-            "$adapterAction = New-ScheduledTaskAction -Execute $PsExe -Argument '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"C:\\nexusquant\\bin\\run-adapter.ps1\"'",
-            "Register-ScheduledTask -TaskName 'MT5AdapterTask' -Action $adapterAction -Trigger $logonTrigger -Principal $userPrincipal -Settings $userSettings | Out-Null",
-            "# Watchdog: every minute as SYSTEM (independent of the interactive session).",
-            "$watchdogTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)",
-            "$watchdogPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest",
-            "$watchdogSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)",
-            "$watchdogAction = New-ScheduledTaskAction -Execute $PsExe -Argument '-NoProfile -ExecutionPolicy Bypass -File \"C:\\nexusquant\\bin\\watchdog.ps1\"'",
-            "Register-ScheduledTask -TaskName 'MT5Watchdog' -Action $watchdogAction -Trigger $watchdogTrigger -Principal $watchdogPrincipal -Settings $watchdogSettings | Out-Null",
-            "Write-Host 'Auto-logon and Scheduled Tasks (MT5Terminal, MT5AdapterTask, MT5Watchdog) configured.'"
-          ]
-        }
-      },
-      {
-        action = "aws:runPowerShellScript"
-        name   = "StartOrRebootInstance"
-        inputs = {
-          runCommand = [
-            "$ErrorActionPreference = 'Stop'",
-            "Write-Host '=== Step 8: Start tasks now if the interactive session exists, otherwise reboot once ==='",
-            "$WinLogonKey = 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon'",
-            "$WinUser = (Get-ItemProperty $WinLogonKey).DefaultUsername",
-            "$hasSession = [bool](quser 2>$null | Select-String -SimpleMatch $WinUser)",
-            "if ($hasSession) {",
-            "    Write-Host 'Interactive session already present: starting tasks without a reboot (no reboot loop on association re-runs).'",
-            "    Start-ScheduledTask -TaskName 'MT5Terminal'",
-            "    Start-ScheduledTask -TaskName 'MT5AdapterTask'",
-            "    Start-ScheduledTask -TaskName 'MT5Watchdog'",
-            "    exit 0",
-            "}",
-            "Write-Host 'No interactive session yet: exiting with code 3010 so SSM Agent reboots the instance and resumes this document after restart.'",
-            "exit 3010"
-          ]
-        }
-      },
-      {
-        action = "aws:runPowerShellScript"
-        name   = "VerifyAdapterHealth"
-        inputs = {
-          runCommand = [
-            "$ErrorActionPreference = 'Stop'",
-            "Write-Host '=== Step 9: Verifying MT5 Terminal and Adapter After Reboot ==='",
-            "$MaxWaitSeconds = 180",
-            "$PollIntervalSeconds = 5",
-            "$Elapsed = 0",
-            "$TerminalUp = $false",
-            "$PortListening = $false",
-            "$HealthOk = $false",
-            "while ($Elapsed -lt $MaxWaitSeconds) {",
-            "    Start-Sleep -Seconds $PollIntervalSeconds",
-            "    $Elapsed += $PollIntervalSeconds",
-            "    if (-not $TerminalUp) {",
-            "        if (Get-Process -Name 'terminal64' -ErrorAction SilentlyContinue) {",
-            "            $TerminalUp = $true",
-            "            Write-Host 'terminal64.exe process detected (running interactively via Scheduled Task).'",
-            "        }",
-            "    }",
-            "    if (-not $PortListening) {",
-            "        if (Get-NetTCPConnection -LocalPort 8100 -State Listen -ErrorAction SilentlyContinue) {",
-            "            $PortListening = $true",
-            "            Write-Host 'TCP port 8100 is listening.'",
-            "        }",
-            "    }",
-            "    if ($PortListening -and (-not $HealthOk)) {",
-            "        try {",
-            "            $resp = Invoke-RestMethod -Uri 'http://localhost:8100/api/v1/health' -Method Get -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop",
-            "            if ($resp.status -eq 'ok' -and $resp.mt5_connected -eq $true) {",
-            "                Write-Host \"Health check verified: status=$($resp.status), mt5_connected=$($resp.mt5_connected)\"",
-            "                $HealthOk = $true",
-            "            } else {",
-            "                Write-Host \"Health check pending: status=$($resp.status), mt5_connected=$($resp.mt5_connected)\"",
-            "            }",
-            "        } catch { Write-Host \"Waiting for HTTP health response: $($_.Exception.Message)\" }",
-            "    }",
-            "    if ($TerminalUp -and $HealthOk) { break }",
-            "}",
-            "if (-not $TerminalUp) { Write-Warning 'terminal64.exe was NOT detected running after reboot within timeout — check Scheduled Task MT5Terminal, terminal-supervisor.log and the auto-logon registry keys.' }",
-            "if (-not $PortListening) { Write-Warning 'Adapter did NOT bind to TCP port 8100 within timeout — check Scheduled Task MT5AdapterTask and C:\\nexusquant\\logs\\mt5_adapter_stdout.log.' }",
-            "if (-not $HealthOk) {",
-            "    Write-Warning 'mt5_connected was not confirmed true. AutoTrading is enabled by the startup config (see C:\\nexusquant\\logs\\terminal-supervisor.log and the watchdog log).'",
-            "    Write-Host 'Recent adapter stdout log:'",
-            "    Get-Content -Path 'C:\\nexusquant\\logs\\mt5_adapter_stdout.log' -Tail 30 -ErrorAction SilentlyContinue | Write-Host",
-            "} else {",
-            "    Write-Host 'SUCCESS: terminal64.exe running interactively, Adapter listening on 8100, MT5 connected.'",
-            "}"
-          ]
-        }
-      }
-    ]
-  })
-
-  tags = {
-    Environment = var.environment
-    Project     = var.project_name
-  }
-}
-
-resource "aws_ssm_document" "reboot_verify" {
-  name            = "${var.project_name}-mt5-reboot-verify-${var.environment}"
-  document_type   = "Command"
-  document_format = "YAML"
-
-  content = yamlencode({
-    schemaVersion = "2.2"
-    description   = "ONE-OFF: reboot the MT5 Adapter EC2 instance and verify Terminal + Adapter come up interactively. Invoke manually via 'aws ssm send-command'. Do NOT create an aws_ssm_association for this document — Associations re-apply on every SSM Agent restart (i.e. every reboot), and since this document itself reboots the instance, an association would cause an infinite reboot loop."
-    parameters    = {}
-    mainSteps = [
-      {
-        action = "aws:runPowerShellScript"
-        name   = "RebootInstance"
-        inputs = {
-          runCommand = [
-            "Write-Host '=== Rebooting instance to activate Auto-Logon and Scheduled Tasks ==='",
-            "Write-Host 'Exiting with code 3010: SSM Agent will reboot the instance and resume this SAME command invocation automatically after restart.'",
-            "exit 3010"
-          ]
-        }
-      },
-      {
-        action = "aws:runPowerShellScript"
-        name   = "VerifyAdapterHealth"
-        inputs = {
-          runCommand = [
-            "$ErrorActionPreference = 'Stop'",
-            "Write-Host '=== Verifying MT5 Terminal and Adapter After Reboot ==='",
-            "$MaxWaitSeconds = 180",
-            "$PollIntervalSeconds = 5",
-            "$Elapsed = 0",
-            "$TerminalUp = $false",
-            "$PortListening = $false",
-            "$HealthOk = $false",
-            "while ($Elapsed -lt $MaxWaitSeconds) {",
-            "    Start-Sleep -Seconds $PollIntervalSeconds",
-            "    $Elapsed += $PollIntervalSeconds",
-            "    if (-not $TerminalUp) {",
-            "        if (Get-Process -Name 'terminal64' -ErrorAction SilentlyContinue) {",
-            "            $TerminalUp = $true",
-            "            Write-Host 'terminal64.exe process detected (running interactively via Scheduled Task).'",
-            "        }",
-            "    }",
-            "    if (-not $PortListening) {",
-            "        if (Get-NetTCPConnection -LocalPort 8100 -State Listen -ErrorAction SilentlyContinue) {",
-            "            $PortListening = $true",
-            "            Write-Host 'TCP port 8100 is listening.'",
-            "        }",
-            "    }",
-            "    if ($PortListening -and (-not $HealthOk)) {",
-            "        try {",
-            "            $resp = Invoke-RestMethod -Uri 'http://localhost:8100/api/v1/health' -Method Get -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop",
-            "            if ($resp.status -eq 'ok' -and $resp.mt5_connected -eq $true) {",
-            "                Write-Host \"Health check verified: status=$($resp.status), mt5_connected=$($resp.mt5_connected)\"",
-            "                $HealthOk = $true",
-            "            } else {",
-            "                Write-Host \"Health check pending: status=$($resp.status), mt5_connected=$($resp.mt5_connected)\"",
-            "            }",
-            "        } catch { Write-Host \"Waiting for HTTP health response: $($_.Exception.Message)\" }",
-            "    }",
-            "    if ($TerminalUp -and $HealthOk) { break }",
-            "}",
-            "if (-not $TerminalUp) { Write-Warning 'terminal64.exe was NOT detected running after reboot within timeout.' }",
-            "if (-not $PortListening) { Write-Warning 'Adapter did NOT bind to TCP port 8100 within timeout.' }",
-            "if (-not $HealthOk) {",
-            "    Write-Warning 'mt5_connected was not confirmed true. AutoTrading is enabled by the startup config (check terminal-supervisor.log).'",
-            "    Get-Content -Path 'C:\\nexusquant\\logs\\mt5_adapter_stdout.log' -Tail 30 -ErrorAction SilentlyContinue | Write-Host",
-            "} else {",
-            "    Write-Host 'SUCCESS: terminal64.exe running interactively, Adapter listening on 8100, MT5 connected.'",
-            "}"
+            "Write-Host '=== Step 8: Bootstrap complete ==='",
+            "Write-Host 'Python, git and the MetaTrader 5 terminal are installed; the connector repo and its virtualenv are ready at C:\\nexusquant\\NexusQuant-MT5-Connector.'",
+            "Write-Host 'Nothing starts automatically. RDP into the instance and run C:\\nexusquant\\bin\\start.ps1 — it loads the required secrets/config and starts the MT5 terminal and the adapter for you.'"
           ]
         }
       }
@@ -711,6 +623,7 @@ resource "aws_ssm_association" "bootstrap" {
 
   depends_on = [
     aws_instance.mt5_adapter,
-    aws_ssm_association.configure_cloudwatch_agent
+    aws_ssm_association.configure_cloudwatch_agent,
+    aws_secretsmanager_secret_version.windows_admin_password
   ]
 }
