@@ -1,0 +1,26 @@
+{
+  "configs": [
+    {
+      "name": "smoke-eurusd-1w",
+      "symbol": "EURUSD",
+      "timeframe": "M1",
+      "start": "2026-04-01T00:00:00+00:00",
+      "end": "2026-04-08T00:00:00+00:00",
+      "dollar_bar_size": "1500000",
+      "asset": {
+        "contract_size": "100000",
+        "volume_min": "0.01",
+        "stops_level_points": 0
+      },
+      "break_even": {
+        "enabled": true,
+        "trigger_mult": "1.0",
+        "buffer_pips": "0.5"
+      },
+      "settings_overrides": {
+        "exit_model": "legacy",
+        "max_holding_bars": 30
+      }
+    }
+  ]
+}

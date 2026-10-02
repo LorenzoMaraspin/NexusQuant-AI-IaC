@@ -5,10 +5,10 @@ output "secret_arn" {
 
 output "db_name" {
   description = "Name of the backtest logical database."
-  value       = postgresql_database.backtest.name
+  value       = var.backtest_db_name
 }
 
 output "db_username" {
   description = "Dedicated backtest login role."
-  value       = postgresql_role.backtest.name
+  value       = var.backtest_db_username
 }

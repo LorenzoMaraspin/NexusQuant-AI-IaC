@@ -8,8 +8,14 @@ variable "environment" {
   type        = string
 }
 
+variable "name_suffix" {
+  description = "Repository name suffix: <project>-<suffix>-<env>. Default \"backend\" keeps the live repository name unchanged."
+  type        = string
+  default     = "backend"
+}
+
 variable "max_image_count" {
-  description = "Maximum tagged images to retain in the backend ECR repository."
+  description = "Maximum tagged images to retain in the ECR repository."
   type        = number
   default     = 15
 }

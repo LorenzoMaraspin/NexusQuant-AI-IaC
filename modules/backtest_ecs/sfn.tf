@@ -12,6 +12,7 @@ locals {
   container_name = "nexusquant-backtest"
 
   sfn_definition = templatefile("${path.module}/sfn_definition.json.tftpl", {
+    grid_bucket          = var.history_s3_bucket_name
     cluster_arn          = aws_ecs_cluster.backtest.arn
     task_definition_arn  = aws_ecs_task_definition.backtest.arn # pinned revision: reproducible runs
     container_name       = local.container_name
@@ -79,6 +80,13 @@ resource "aws_iam_role_policy" "sfn" {
         Resource = [
           "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task/${aws_ecs_cluster.backtest.name}/*"
         ]
+      },
+      {
+        # The state machine itself reads the grid (JSON list of configs) from S3.
+        Sid      = "ReadBacktestGridFromS3"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = ["arn:aws:s3:::${var.history_s3_bucket_name}/${var.grid_s3_prefix}/*"]
       },
       {
         Sid    = "PassOnlyBacktestRolesToEcs"

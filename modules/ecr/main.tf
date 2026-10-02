@@ -3,7 +3,7 @@
 ###############################################################################
 
 resource "aws_ecr_repository" "backend" {
-  name                 = "${var.project_name}-backend-${var.environment}"
+  name                 = "${var.project_name}-${var.name_suffix}-${var.environment}"
   image_tag_mutability = "IMMUTABLE" # every build gets a unique tag (git SHA) — no floating "latest"
 
   image_scanning_configuration {
@@ -15,7 +15,7 @@ resource "aws_ecr_repository" "backend" {
   }
 
   tags = {
-    Name        = "${var.project_name}-backend-${var.environment}"
+    Name        = "${var.project_name}-${var.name_suffix}-${var.environment}"
     Environment = var.environment
     Project     = var.project_name
   }

@@ -126,6 +126,21 @@ module "ecr" {
 }
 
 # --------------------------------------------------------------------------- #
+# 5b. ECR (backtest): dedicated repository for the Dockerfile.backtest image.
+#     Separate from the live repo so that backtest builds can never push the
+#     live image tag out of the "keep last N tagged images" lifecycle rule.
+# --------------------------------------------------------------------------- #
+module "ecr_backtest" {
+  source = "./modules/ecr"
+
+  project_name         = var.project_name
+  environment          = var.environment
+  name_suffix          = "backtest"
+  max_image_count      = var.ecr_max_image_count
+  untagged_expiry_days = var.ecr_untagged_expiry_days
+}
+
+# --------------------------------------------------------------------------- #
 # 6. Secrets Backend: Secrets Manager + SSM for NexusQuant AI Backend
 # --------------------------------------------------------------------------- #
 module "secrets_backend" {
@@ -191,22 +206,20 @@ module "ecs_backend" {
 }
 
 # --------------------------------------------------------------------------- #
-# 8. Backtest DB: logical database + dedicated role inside the existing RDS
-#    Needs network reachability to RDS (SSM port-forward) -> opt-in.
+# 8. Backtest DB credentials (Secrets Manager). The database itself is created
+#    once with scripts/create_backtest_db.py (RDS is private).
 # --------------------------------------------------------------------------- #
 module "backtest_db" {
-  count  = var.enable_backtest_db ? 1 : 0
   source = "./modules/backtest_db"
 
   project_name                = var.project_name
   environment                 = var.environment
-  master_username             = var.db_username
   secret_recovery_window_days = var.secret_recovery_window_days
 }
 
 # --------------------------------------------------------------------------- #
 # 9. Backtest Engine (ECS Fargate one-off + Step Functions) — Fasi 2-4
-#    Requires enable_backtest_db = true (the execution role reads its secret).
+#    Run scripts/create_backtest_db.py before the first backtest.
 # --------------------------------------------------------------------------- #
 module "backtest_ecs" {
   count  = var.enable_backtest_engine ? 1 : 0
@@ -222,13 +235,12 @@ module "backtest_ecs" {
   bedrock_region    = var.bedrock_region
   bedrock_model_ids = var.backtest_bedrock_model_ids
 
-  ecr_repository_arn     = module.ecr.repository_arn
-  backtest_db_secret_arn = var.enable_backtest_db ? module.backtest_db[0].secret_arn : ""
+  ecr_repository_arn     = module.ecr_backtest.repository_arn
+  backtest_db_secret_arn = module.backtest_db.secret_arn
 
   # Fase 3: compute (4 vCPU / 16 GB Fargate task definition, no service)
-  ecr_repository_url   = module.ecr.repository_url
+  ecr_repository_url   = module.ecr_backtest.repository_url
   image_tag            = var.backtest_image_tag
-  live_image_tag       = var.backend_image_tag
   container_command    = ["--log-level=${var.backtest_log_level}"]
   container_entrypoint = var.backtest_container_entrypoint
   extra_environment    = var.backtest_extra_environment
@@ -236,7 +248,7 @@ module "backtest_ecs" {
 
   postgres_host = module.rds.endpoint
   postgres_port = module.rds.port
-  postgres_db   = var.enable_backtest_db ? module.backtest_db[0].db_name : ""
+  postgres_db   = module.backtest_db.db_name
 
   # Fase 4: Step Functions orchestration
   subnet_id            = module.networking.subnet_private_backtest_id

@@ -108,12 +108,4 @@ resource "aws_ecs_task_definition" "backtest" {
     Environment = var.environment
     Project     = var.project_name
   }
-
-  lifecycle {
-    # The live image's ENTRYPOINT starts the trading loop: never run it here.
-    precondition {
-      condition     = var.live_image_tag == "" || var.image_tag != var.live_image_tag
-      error_message = "backtest_image_tag must be a dedicated backtest image (Dockerfile.backtest, e.g. backtest-<git-sha>), not the live backend tag."
-    }
-  }
 }

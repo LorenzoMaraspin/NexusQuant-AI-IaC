@@ -173,8 +173,8 @@ output "s3_gateway_endpoint_id" {
 }
 
 output "backtest_db_secret_arn" {
-  description = "Secrets Manager ARN with the backtest DB credentials (null until enable_backtest_db = true)."
-  value       = var.enable_backtest_db ? module.backtest_db[0].secret_arn : null
+  description = "Secrets Manager ARN with the backtest DB credentials."
+  value       = module.backtest_db.secret_arn
 }
 
 output "backtest_cluster_name" {
@@ -198,4 +198,14 @@ output "backtest_execution_role_arn" {
 output "backtest_state_machine_arn" {
   description = "Step Functions state machine that runs a backtest grid (null until enable_backtest_engine = true). Input: {\"configs\": [...], \"run_group_id\": \"<uuid, optional>\"}."
   value       = var.enable_backtest_engine ? module.backtest_ecs[0].state_machine_arn : null
+}
+
+output "backtest_ecr_repository_url" {
+  description = "ECR repository for the backtest image (docker push target)."
+  value       = module.ecr_backtest.repository_url
+}
+
+output "backtest_ecr_repository_name" {
+  description = "Name of the backtest ECR repository."
+  value       = module.ecr_backtest.repository_name
 }

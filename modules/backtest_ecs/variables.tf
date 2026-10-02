@@ -23,6 +23,12 @@ variable "history_s3_bucket_name" {
   }
 }
 
+variable "grid_s3_prefix" {
+  description = "Prefix in the data bucket where backtest grid files (JSON list of configs) are stored; the state machine may read only this prefix."
+  type        = string
+  default     = "backtest-configs"
+}
+
 variable "history_s3_prefix" {
   description = "Key prefix inside the history bucket that the backtest may read."
   type        = string
@@ -47,12 +53,12 @@ variable "ecr_repository_arn" {
 }
 
 variable "backtest_db_secret_arn" {
-  description = "ARN of the Secrets Manager secret with the nexusquant_backtest DB credentials (module.backtest_db). Requires enable_backtest_db = true."
+  description = "ARN of the Secrets Manager secret with the nexusquant_backtest DB credentials (module.backtest_db)."
   type        = string
 
   validation {
     condition     = var.backtest_db_secret_arn != null && var.backtest_db_secret_arn != ""
-    error_message = "backtest_db_secret_arn is empty: set enable_backtest_db = true so the backtest DB secret exists."
+    error_message = "backtest_db_secret_arn is empty: pass module.backtest_db.secret_arn."
   }
 }
 
@@ -65,7 +71,7 @@ variable "log_retention_days" {
 # --- Fase 3: compute ---
 
 variable "ecr_repository_url" {
-  description = "ECR repository URL of the image run by the backtest task (same codebase as the live engine)."
+  description = "URL of the dedicated backtest ECR repository."
   type        = string
 }
 
@@ -77,12 +83,6 @@ variable "image_tag" {
     condition     = var.image_tag != ""
     error_message = "image_tag is empty: set backtest_image_tag to the tag of the Dockerfile.backtest image (e.g. backtest-<git-sha>)."
   }
-}
-
-variable "live_image_tag" {
-  description = "Tag of the live backend image. Used only as a guard: the backtest task must never run it."
-  type        = string
-  default     = ""
 }
 
 variable "task_cpu" {

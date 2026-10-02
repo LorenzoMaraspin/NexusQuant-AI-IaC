@@ -1,14 +1,80 @@
 {
-  "Comment": "NexusQuant offline backtest grid. Input: {\"configs\": [ {...}, ... ], \"run_group_id\": \"<uuid, optional>\"}. One ECS Fargate task per config; MaxConcurrency protects Bedrock quotas and RDS connections.",
-  "StartAt": "ResolveRunGroup",
+  "Comment": "NexusQuant offline backtest grid. Start execution with {\"key\": \"backtest-configs/<file>.json\"} (grid read straight from S3: a JSON list of configs) or with {\"configs\": [ {...} ], \"run_group_id\": \"<uuid, optional>\"}. One ECS Fargate task per config; MaxConcurrency protects Bedrock quotas and RDS connections.",
+  "StartAt": "Start",
   "States": {
+    "Start": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.configs",
+          "IsPresent": true,
+          "Next": "ResolveRunGroup"
+        },
+        {
+          "Variable": "$.key",
+          "IsPresent": true,
+          "Next": "LoadGrid"
+        }
+      ],
+      "Default": "NoGridProvided"
+    },
+    "NoGridProvided": {
+      "Type": "Fail",
+      "Error": "NoGridProvided",
+      "Cause": "Input must be {\"key\": \"backtest-configs/<file>.json\"} (S3 object in the data bucket) or {\"configs\": [ ... ]}."
+    },
+    "LoadGrid": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:s3:getObject",
+      "Parameters": {
+        "Bucket": "${grid_bucket}",
+        "Key.$": "$.key"
+      },
+      "ResultSelector": {
+        "body.$": "$.Body"
+      },
+      "ResultPath": "$.file",
+      "Next": "ParseGrid"
+    },
+    "ParseGrid": {
+      "Type": "Pass",
+      "Parameters": {
+        "grid.$": "States.StringToJson($.file.body)"
+      },
+      "Next": "WrappedOrList"
+    },
+    "WrappedOrList": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.grid.configs",
+          "IsPresent": true,
+          "Next": "UnwrapConfigs"
+        }
+      ],
+      "Default": "ListConfigs"
+    },
+    "UnwrapConfigs": {
+      "Type": "Pass",
+      "Parameters": {
+        "configs.$": "$.grid.configs"
+      },
+      "Next": "GenerateRunGroup"
+    },
+    "ListConfigs": {
+      "Type": "Pass",
+      "Parameters": {
+        "configs.$": "$.grid"
+      },
+      "Next": "GenerateRunGroup"
+    },
     "ResolveRunGroup": {
       "Type": "Choice",
       "Choices": [
         {
           "Variable": "$.run_group_id",
           "IsPresent": true,
-          "Next": "RunBacktests"
+          "Next": "CollectNames"
         }
       ],
       "Default": "GenerateRunGroup"
@@ -19,7 +85,51 @@
         "run_group_id.$": "States.UUID()",
         "configs.$": "$.configs"
       },
-      "Next": "RunBacktests"
+      "Next": "CollectNames"
+    },
+    "CollectNames": {
+      "Type": "Pass",
+      "Parameters": {
+        "run_group_id.$": "$.run_group_id",
+        "configs.$": "$.configs",
+        "names.$": "$.configs[*].name"
+      },
+      "Next": "CountNames"
+    },
+    "CountNames": {
+      "Type": "Pass",
+      "Parameters": {
+        "run_group_id.$": "$.run_group_id",
+        "configs.$": "$.configs",
+        "total.$": "States.ArrayLength($.configs)",
+        "named.$": "States.ArrayLength($.names)",
+        "unique.$": "States.ArrayLength(States.ArrayUnique($.names))"
+      },
+      "Next": "NamesValid"
+    },
+    "NamesValid": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "And": [
+            {
+              "Variable": "$.named",
+              "NumericEqualsPath": "$.total"
+            },
+            {
+              "Variable": "$.unique",
+              "NumericEqualsPath": "$.total"
+            }
+          ],
+          "Next": "RunBacktests"
+        }
+      ],
+      "Default": "InvalidGrid"
+    },
+    "InvalidGrid": {
+      "Type": "Fail",
+      "Error": "InvalidGrid",
+      "Cause": "Every config needs a non-empty, unique 'name' (retries are idempotent on run_group_id + name)."
     },
     "RunBacktests": {
       "Type": "Map",

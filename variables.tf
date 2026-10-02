@@ -143,7 +143,6 @@ variable "rds_publicly_accessible" {
   default     = false
 }
 
-
 # =============================================================================
 # 4. Secrets & MT5 Connector Configuration
 # =============================================================================
@@ -390,26 +389,8 @@ variable "backtest_allow_https_egress" {
   default     = true
 }
 
-variable "enable_backtest_db" {
-  description = "Create the nexusquant_backtest logical database + dedicated role inside the existing RDS. Requires Terraform to reach RDS (see backtest_db_connect_host)."
-  type        = bool
-  default     = false
-}
-
-variable "backtest_db_connect_host" {
-  description = "Host the postgresql provider connects to. Empty = RDS endpoint (when running inside the VPC). Use 127.0.0.1 with an SSM port-forward from your workstation."
-  type        = string
-  default     = ""
-}
-
-variable "backtest_db_connect_port" {
-  description = "Port the postgresql provider connects to (local port of the SSM port-forward, e.g. 15432)."
-  type        = number
-  default     = 5432
-}
-
 variable "enable_backtest_engine" {
-  description = "Create the Backtest Engine IAM roles / ECS / Step Functions resources. Requires enable_backtest_db = true."
+  description = "Create the Backtest Engine IAM roles / ECS / Step Functions resources. Run scripts/create_backtest_db.py first (creates the nexusquant_backtest database)."
   type        = bool
   default     = false
 }
@@ -421,7 +402,7 @@ variable "backtest_bedrock_model_ids" {
 }
 
 variable "backtest_image_tag" {
-  description = "Tag of the BACKTEST image in ECR, built from Dockerfile.backtest (e.g. \"backtest-<git-sha>\"). Required when enable_backtest_engine = true. Must differ from backend_image_tag: the live image would start the trading loop."
+  description = "Tag of the backtest image in the dedicated backtest ECR repository (output backtest_ecr_repository_url), built from Dockerfile.backtest, e.g. \"backtest-<git-sha>\". Required when enable_backtest_engine = true. Independent from backend_image_tag (live)."
   type        = string
   default     = ""
 }
