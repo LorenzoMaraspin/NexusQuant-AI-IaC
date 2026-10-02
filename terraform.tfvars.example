@@ -81,3 +81,18 @@ backend_enable_execute_command = true
 # Logging
 log_level_console = "INFO"
 log_level_file    = "DEBUG"
+
+# --- Historical data export (MT5 adapter -> S3) ---
+history_s3_bucket_name = "nexusquant-data"
+history_s3_prefix      = "historical"
+history_create_bucket   = true   # false if the bucket already exists
+
+# --- Backtest Engine (offline) ---
+subnet_private_backtest_cidr = "10.0.6.0/24"
+backtest_allow_https_egress  = true   # false only once Interface VPC Endpoints exist
+enable_backtest_db           = false  # true needs the SSM port-forward (see providers.tf)
+enable_backtest_engine       = false  # true after enable_backtest_db has been applied
+backtest_image_tag           = ""     # Dockerfile.backtest image, e.g. "backtest-<git-sha>" (NOT the live tag)
+backtest_log_level           = "ERROR" # INFO shows progress logs
+backtest_max_concurrency     = 10     # <= 20 recommended with --workers 1 (RDS role limit 40, Bedrock quotas)
+backtest_bedrock_model_ids   = ["eu.amazon.nova-lite-v1:0", "eu.amazon.nova-pro-v1:0"]

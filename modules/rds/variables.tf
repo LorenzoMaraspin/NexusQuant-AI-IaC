@@ -73,8 +73,13 @@ variable "backup_retention_days" {
 }
 
 variable "publicly_accessible" {
-  description = "Whether the RDS instance is publicly accessible."
+  description = "Whether the RDS instance is publicly accessible. Must stay false: the instance also hosts the isolated backtest database."
   type        = bool
   default     = false
+
+  validation {
+    condition     = var.publicly_accessible == false
+    error_message = "RDS must not be publicly accessible (publicly_accessible = false)."
+  }
 }
 

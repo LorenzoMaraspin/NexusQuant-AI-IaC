@@ -98,3 +98,15 @@ variable "cloudwatch_log_group_name" {
   type        = string
   default     = ""
 }
+
+variable "history_s3_bucket_name" {
+  description = "S3 bucket the MT5 adapter may write historical data exports to. Empty = no S3 permissions are granted."
+  type        = string
+  default     = ""
+}
+
+variable "history_s3_prefix" {
+  description = "Key prefix inside history_s3_bucket_name the adapter may write to (no leading/trailing slash)."
+  type        = string
+  default     = "historical"
+}

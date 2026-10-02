@@ -32,3 +32,28 @@ output "sg_rds_id" {
   description = "Security Group ID for RDS."
   value       = aws_security_group.rds.id
 }
+
+output "subnet_private_backtest_id" {
+  description = "ID of the isolated private subnet for the Backtest Engine tasks."
+  value       = aws_subnet.private_backtest.id
+}
+
+output "route_table_private_backtest_id" {
+  description = "ID of the route table of the backtest subnet (associated with the S3 Gateway Endpoint)."
+  value       = aws_route_table.private_backtest.id
+}
+
+output "sg_backtest_id" {
+  description = "Security Group ID for the Backtest Engine tasks."
+  value       = aws_security_group.backtest.id
+}
+
+output "vpc_endpoint_s3_id" {
+  description = "ID of the S3 Gateway VPC Endpoint."
+  value       = aws_vpc_endpoint.s3.id
+}
+
+output "s3_prefix_list_id" {
+  description = "Managed prefix list ID of the S3 Gateway Endpoint."
+  value       = aws_vpc_endpoint.s3.prefix_list_id
+}

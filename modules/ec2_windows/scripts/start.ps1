@@ -59,5 +59,9 @@ foreach ($p in $params) {
 [Environment]::SetEnvironmentVariable('PYTHONPATH', ($RepoDir + '\src'), 'Process')
 
 Set-Location -Path $RepoDir
-Write-Host 'Starting the adapter in the foreground (Ctrl+C to stop; re-run this script to restart it)...'
-& $Python -m presentation.main
+Write-Host 'Starting the adapter in the foreground; stdout/stderr go to C:\nexusquant\logs (Ctrl+C to stop; re-run this script to restart it)...'
+New-Item -ItemType Directory -Force -Path 'C:\nexusquant\logs' | Out-Null
+Start-Process -FilePath $Python -ArgumentList '-m', 'presentation.main' `
+    -RedirectStandardOutput 'C:\nexusquant\logs\mt5_adapter_stdout.log' `
+    -RedirectStandardError 'C:\nexusquant\logs\mt5_adapter_stderr.log' `
+    -NoNewWindow -Wait

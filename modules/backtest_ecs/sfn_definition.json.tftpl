@@ -1,0 +1,212 @@
+{
+  "Comment": "NexusQuant offline backtest grid. Input: {\"configs\": [ {...}, ... ], \"run_group_id\": \"<uuid, optional>\"}. One ECS Fargate task per config; MaxConcurrency protects Bedrock quotas and RDS connections.",
+  "StartAt": "ResolveRunGroup",
+  "States": {
+    "ResolveRunGroup": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.run_group_id",
+          "IsPresent": true,
+          "Next": "RunBacktests"
+        }
+      ],
+      "Default": "GenerateRunGroup"
+    },
+    "GenerateRunGroup": {
+      "Type": "Pass",
+      "Parameters": {
+        "run_group_id.$": "States.UUID()",
+        "configs.$": "$.configs"
+      },
+      "Next": "RunBacktests"
+    },
+    "RunBacktests": {
+      "Type": "Map",
+      "ItemsPath": "$.configs",
+      "MaxConcurrency": ${max_concurrency},
+      "ItemSelector": {
+        "run_group_id.$": "$.run_group_id",
+        "index.$": "$$.Map.Item.Index",
+        "config.$": "$$.Map.Item.Value"
+      },
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "RunWithRetry",
+        "States": {
+          "RunWithRetry": {
+            "Type": "Parallel",
+            "Branches": [
+              {
+                "StartAt": "RunBacktestTask",
+                "States": {
+                  "RunBacktestTask": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::ecs:runTask.sync",
+                    "TimeoutSeconds": ${task_timeout_seconds},
+                    "Parameters": {
+                      "Cluster": "${cluster_arn}",
+                      "TaskDefinition": "${task_definition_arn}",
+                      "CapacityProviderStrategy": [
+                        {
+                          "CapacityProvider": "${capacity_provider}",
+                          "Weight": 1
+                        }
+                      ],
+                      "NetworkConfiguration": {
+                        "AwsvpcConfiguration": {
+                          "Subnets": ${jsonencode(subnet_ids)},
+                          "SecurityGroups": ${jsonencode(security_group_ids)},
+                          "AssignPublicIp": "DISABLED"
+                        }
+                      },
+                      "Group.$": "States.Format('backtest-{}', $.run_group_id)",
+                      "Overrides": {
+                        "ContainerOverrides": [
+                          {
+                            "Name": "${container_name}",
+                            "Environment": [
+                              {
+                                "Name": "BACKTEST_CONFIG_JSON",
+                                "Value.$": "States.JsonToString($.config)"
+                              },
+                              {
+                                "Name": "BACKTEST_RUN_GROUP_ID",
+                                "Value.$": "$.run_group_id"
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "ResultSelector": {
+                      "taskArn.$": "$.TaskArn",
+                      "exitCodes.$": "$.Containers[*].ExitCode"
+                    },
+                    "ResultPath": "$.task",
+                    "Next": "CheckExitCode"
+                  },
+                  "CheckExitCode": {
+                    "Type": "Pass",
+                    "Parameters": {
+                      "taskArn.$": "$.task.taskArn",
+                      "ok.$": "States.ArrayContains($.task.exitCodes, 0)"
+                    },
+                    "Next": "ExitCodeOk"
+                  },
+                  "ExitCodeOk": {
+                    "Type": "Choice",
+                    "Choices": [
+                      {
+                        "Variable": "$.ok",
+                        "BooleanEquals": true,
+                        "Next": "BranchSucceeded"
+                      }
+                    ],
+                    "Default": "BacktestTaskFailed"
+                  },
+                  "BranchSucceeded": {
+                    "Type": "Pass",
+                    "End": true
+                  },
+                  "BacktestTaskFailed": {
+                    "Type": "Fail",
+                    "Error": "BacktestTaskFailed",
+                    "Cause": "The backtest container exited with a non-zero exit code or never ran (Spot interruption, image pull or startup failure)."
+                  }
+                }
+              }
+            ],
+            "ResultSelector": {
+              "taskArn.$": "$[0].taskArn"
+            },
+            "ResultPath": "$.task",
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "BacktestTaskFailed",
+                  "States.TaskFailed",
+                  "ECS.AmazonECSException",
+                  "ECS.ServerException",
+                  "AmazonECS.Unknown"
+                ],
+                "IntervalSeconds": 30,
+                "BackoffRate": 2,
+                "MaxAttempts": ${retry_attempts}
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "ResultPath": "$.error",
+                "Next": "MarkFailed"
+              }
+            ],
+            "Next": "MarkSucceeded"
+          },
+          "MarkSucceeded": {
+            "Type": "Pass",
+            "Parameters": {
+              "status": "SUCCEEDED",
+              "index.$": "$.index",
+              "taskArn.$": "$.task.taskArn"
+            },
+            "End": true
+          },
+          "MarkFailed": {
+            "Type": "Pass",
+            "Parameters": {
+              "status": "FAILED",
+              "index.$": "$.index",
+              "error.$": "$.error.Error"
+            },
+            "End": true
+          }
+        }
+      },
+      "ResultPath": "$.results",
+      "Next": "SummarizeResults"
+    },
+    "SummarizeResults": {
+      "Type": "Pass",
+      "Parameters": {
+        "run_group_id.$": "$.run_group_id",
+        "results.$": "$.results",
+        "statuses.$": "$.results[*].status"
+      },
+      "Next": "EvaluateResults"
+    },
+    "EvaluateResults": {
+      "Type": "Pass",
+      "Parameters": {
+        "run_group_id.$": "$.run_group_id",
+        "results.$": "$.results",
+        "hasFailures.$": "States.ArrayContains($.statuses, 'FAILED')"
+      },
+      "Next": "AnyFailures"
+    },
+    "AnyFailures": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.hasFailures",
+          "BooleanEquals": true,
+          "Next": "SomeBacktestsFailed"
+        }
+      ],
+      "Default": "AllSucceeded"
+    },
+    "SomeBacktestsFailed": {
+      "Type": "Fail",
+      "Error": "BacktestsFailed",
+      "Cause": "One or more backtest configs failed after retries. Check the RunBacktests state output: items with status FAILED carry the grid index."
+    },
+    "AllSucceeded": {
+      "Type": "Succeed"
+    }
+  }
+}

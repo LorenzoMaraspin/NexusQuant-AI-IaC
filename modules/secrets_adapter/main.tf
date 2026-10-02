@@ -48,10 +48,15 @@ locals {
     ADAPTER_DB_PATH           = "data/adapter_trade_log.db"
     LOG_FILE_PATH             = "logs/mt5_adapter.log"
   }
+  # Optional extras (AWS_REGION for the S3 history export; HISTORY_* use app defaults).
+  ssm_params_all = merge(
+    local.ssm_params,
+    var.aws_region != "" ? { AWS_REGION = var.aws_region } : {}
+  )
 }
 
 resource "aws_ssm_parameter" "config" {
-  for_each = local.ssm_params
+  for_each = local.ssm_params_all
 
   name  = "${local.ssm_prefix}/${each.key}"
   type  = "String"

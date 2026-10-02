@@ -114,3 +114,15 @@ variable "bedrock_model_ids" {
   type        = list(string)
   default     = []
 }
+
+variable "history_s3_bucket_name" {
+  description = "History S3 bucket the backend may read from. Empty = no S3 policy is created."
+  type        = string
+  default     = ""
+}
+
+variable "history_s3_prefix" {
+  description = "Key prefix in the history bucket the backend may read."
+  type        = string
+  default     = "historical"
+}

@@ -54,3 +54,15 @@ variable "rdp_admin_cidr" {
   type        = string
   default     = ""
 }
+
+variable "subnet_private_backtest_cidr" {
+  description = "CIDR for the isolated private subnet running the Backtest Engine Fargate tasks. Must not overlap with any other subnet and must not be trusted by the MT5 Adapter SG."
+  type        = string
+  default     = "10.0.6.0/24"
+}
+
+variable "backtest_allow_https_egress" {
+  description = "Allow the backtest SG HTTPS (443) egress to 0.0.0.0/0 via NAT, needed for ECR API, Secrets Manager, CloudWatch Logs and Bedrock. Set to false only when Interface VPC Endpoints for those services exist."
+  type        = bool
+  default     = true
+}

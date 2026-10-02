@@ -357,3 +357,112 @@ variable "backend_enable_execute_command" {
   type        = bool
   default     = true
 }
+
+variable "history_s3_bucket_name" {
+  description = "S3 bucket for historical data exports (SSE-S3 encrypted). The MT5 adapter role can write, the backend role can read, both only under history_s3_prefix. Empty = no bucket, no S3 access."
+  type        = string
+  default     = ""
+}
+
+variable "history_s3_prefix" {
+  description = "Key prefix in history_s3_bucket_name that the adapter may write to."
+  type        = string
+  default     = "historical"
+}
+
+variable "history_create_bucket" {
+  description = "Create the history S3 bucket with Terraform. Set to false if the bucket already exists (IAM permissions are still granted)."
+  type        = bool
+  default     = true
+}
+
+# --- Backtest Engine (offline, ECS Fargate one-off) ---
+
+variable "subnet_private_backtest_cidr" {
+  description = "CIDR of the isolated private subnet for the Backtest Engine tasks."
+  type        = string
+  default     = "10.0.6.0/24"
+}
+
+variable "backtest_allow_https_egress" {
+  description = "Allow HTTPS (443) egress from the backtest SG to 0.0.0.0/0 via NAT (ECR API, Secrets Manager, CloudWatch Logs, Bedrock). Set false only once Interface VPC Endpoints exist."
+  type        = bool
+  default     = true
+}
+
+variable "enable_backtest_db" {
+  description = "Create the nexusquant_backtest logical database + dedicated role inside the existing RDS. Requires Terraform to reach RDS (see backtest_db_connect_host)."
+  type        = bool
+  default     = false
+}
+
+variable "backtest_db_connect_host" {
+  description = "Host the postgresql provider connects to. Empty = RDS endpoint (when running inside the VPC). Use 127.0.0.1 with an SSM port-forward from your workstation."
+  type        = string
+  default     = ""
+}
+
+variable "backtest_db_connect_port" {
+  description = "Port the postgresql provider connects to (local port of the SSM port-forward, e.g. 15432)."
+  type        = number
+  default     = 5432
+}
+
+variable "enable_backtest_engine" {
+  description = "Create the Backtest Engine IAM roles / ECS / Step Functions resources. Requires enable_backtest_db = true."
+  type        = bool
+  default     = false
+}
+
+variable "backtest_bedrock_model_ids" {
+  description = "Bedrock model IDs (Claude / Llama) the backtest task role may invoke, e.g. an eu. inference profile ID. Empty = no Bedrock permission."
+  type        = list(string)
+  default     = []
+}
+
+variable "backtest_image_tag" {
+  description = "Tag of the BACKTEST image in ECR, built from Dockerfile.backtest (e.g. \"backtest-<git-sha>\"). Required when enable_backtest_engine = true. Must differ from backend_image_tag: the live image would start the trading loop."
+  type        = string
+  default     = ""
+}
+
+variable "backtest_log_level" {
+  description = "Value of the --log-level argument of the backtest CLI (DEBUG|INFO|WARNING|ERROR). ERROR keeps CloudWatch quiet; INFO shows progress."
+  type        = string
+  default     = "ERROR"
+
+  validation {
+    condition     = contains(["DEBUG", "INFO", "WARNING", "ERROR"], var.backtest_log_level)
+    error_message = "backtest_log_level must be one of DEBUG, INFO, WARNING, ERROR."
+  }
+}
+
+variable "backtest_max_concurrency" {
+  description = "Max parallel backtest tasks started by Step Functions (1-40)."
+  type        = number
+  default     = 10
+}
+
+variable "backtest_task_timeout_seconds" {
+  description = "Hard timeout (seconds) of a single backtest task."
+  type        = number
+  default     = 21600
+}
+
+variable "backtest_container_entrypoint" {
+  description = "ENTRYPOINT override for the backtest container. Leave empty: the Dockerfile.backtest image already runs python -m scripts.run_backtest_batch."
+  type        = list(string)
+  default     = []
+}
+
+variable "backtest_extra_environment" {
+  description = "Extra NON-secret environment variables for the backtest container. Per-agent model names belong in the config (settings_overrides), not here. Never put live keys here."
+  type        = map(string)
+  default     = {}
+}
+
+variable "backtest_use_fargate_spot" {
+  description = "Run backtest tasks on FARGATE_SPOT (~70% cheaper, but an interrupted task restarts from scratch). false = on-demand FARGATE, safer for long backtests."
+  type        = bool
+  default     = false
+}

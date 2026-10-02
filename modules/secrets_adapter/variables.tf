@@ -99,3 +99,9 @@ variable "log_level_file" {
   type        = string
   default     = "DEBUG"
 }
+
+variable "aws_region" {
+  description = "AWS region exported to the adapter as AWS_REGION (used by boto3 for the S3 history export). Empty = not set."
+  type        = string
+  default     = ""
+}

@@ -144,6 +144,32 @@ resource "aws_iam_role_policy" "ecs_task_metrics" {
   })
 }
 
+resource "aws_iam_role_policy" "ecs_task_history_read" {
+  count = var.history_s3_bucket_name != "" ? 1 : 0
+
+  name = "backend-history-s3-read"
+  role = aws_iam_role.ecs_task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "HistoryObjectsRead"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = ["arn:aws:s3:::${var.history_s3_bucket_name}/${var.history_s3_prefix}/*"]
+      },
+      {
+        Sid       = "HistoryBucketList"
+        Effect    = "Allow"
+        Action    = ["s3:ListBucket"]
+        Resource  = ["arn:aws:s3:::${var.history_s3_bucket_name}"]
+        Condition = { StringLike = { "s3:prefix" = ["${var.history_s3_prefix}/*", var.history_s3_prefix] } }
+      }
+    ]
+  })
+}
+
 resource "aws_iam_role_policy" "ecs_task_exec" {
   count = var.enable_execute_command ? 1 : 0
 

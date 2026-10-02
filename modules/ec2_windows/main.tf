@@ -28,6 +28,17 @@ locals {
   effective_log_group_name = var.cloudwatch_log_group_name != "" ? var.cloudwatch_log_group_name : "/${var.project_name}/${var.environment}/mt5-adapter"
   ssm_prefix               = "/${var.project_name}/${var.environment}"
 
+  # Optional S3 write access for the historical-data export feature. The role is
+  # limited to a single bucket/prefix: the bucket name also arrives in the API
+  # payload, so this policy is what prevents writes to any other bucket.
+  # The bucket uses SSE-S3 (AWS-managed keys), so no KMS permissions are needed.
+  history_s3_statements = var.history_s3_bucket_name == "" ? [] : [{
+    Sid      = "HistoryS3Write"
+    Effect   = "Allow"
+    Action   = ["s3:PutObject", "s3:AbortMultipartUpload"]
+    Resource = ["arn:aws:s3:::${var.history_s3_bucket_name}/${var.history_s3_prefix}/*"]
+  }]
+
   # Runtime PowerShell scripts deployed to C:\nexusquant\bin by the bootstrap document.
   # CRs are stripped so the here-string embedding is identical regardless of the checkout EOL.
   runtime_scripts = {
@@ -114,7 +125,7 @@ resource "aws_iam_role_policy" "ec2_windows_inline" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Sid      = "SecretsManagerRead"
         Effect   = "Allow"
@@ -150,7 +161,7 @@ resource "aws_iam_role_policy" "ec2_windows_inline" {
           StringEquals = { "cloudwatch:namespace" = "NexusQuant/MT5" }
         }
       }
-    ]
+    ], local.history_s3_statements)
   })
 }
 
@@ -186,13 +197,11 @@ resource "aws_ssm_parameter" "cloudwatch_agent_config" {
               file_path        = "C:\\nexusquant\\logs\\mt5_adapter_stdout.log"
               log_group_name   = aws_cloudwatch_log_group.adapter.name
               log_stream_name  = "{instance_id}-stdout"
-              timestamp_format = "%Y-%m-%dT%H:%M:%S%z"
             },
             {
               file_path        = "C:\\nexusquant\\logs\\mt5_adapter_stderr.log"
               log_group_name   = aws_cloudwatch_log_group.adapter.name
               log_stream_name  = "{instance_id}-stderr"
-              timestamp_format = "%Y-%m-%dT%H:%M:%S%z"
             },
             {
               file_path       = "C:\\nexusquant\\logs\\mt5_adapter.log"

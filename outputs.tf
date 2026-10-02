@@ -154,3 +154,48 @@ output "mt5_adapter_base_url" {
   description = "Calculated MT5 Adapter REST API base URL wired to the backend."
   value       = "http://${module.ec2_windows.private_ip}:8100"
 }
+
+# --- Backtest Engine ---
+
+output "backtest_subnet_id" {
+  description = "Isolated private subnet for the Backtest Engine Fargate tasks."
+  value       = module.networking.subnet_private_backtest_id
+}
+
+output "backtest_security_group_id" {
+  description = "Security Group of the Backtest Engine tasks."
+  value       = module.networking.sg_backtest_id
+}
+
+output "s3_gateway_endpoint_id" {
+  description = "S3 Gateway VPC Endpoint ID."
+  value       = module.networking.vpc_endpoint_s3_id
+}
+
+output "backtest_db_secret_arn" {
+  description = "Secrets Manager ARN with the backtest DB credentials (null until enable_backtest_db = true)."
+  value       = var.enable_backtest_db ? module.backtest_db[0].secret_arn : null
+}
+
+output "backtest_cluster_name" {
+  description = "ECS cluster running the one-off backtest tasks (null until enable_backtest_engine = true)."
+  value       = var.enable_backtest_engine ? module.backtest_ecs[0].cluster_name : null
+}
+
+output "backtest_task_definition_arn" {
+  description = "Backtest task definition ARN without revision (null until enable_backtest_engine = true)."
+  value       = var.enable_backtest_engine ? module.backtest_ecs[0].task_definition_family_arn : null
+}
+
+output "backtest_task_role_arn" {
+  value = var.enable_backtest_engine ? module.backtest_ecs[0].task_role_arn : null
+}
+
+output "backtest_execution_role_arn" {
+  value = var.enable_backtest_engine ? module.backtest_ecs[0].execution_role_arn : null
+}
+
+output "backtest_state_machine_arn" {
+  description = "Step Functions state machine that runs a backtest grid (null until enable_backtest_engine = true). Input: {\"configs\": [...], \"run_group_id\": \"<uuid, optional>\"}."
+  value       = var.enable_backtest_engine ? module.backtest_ecs[0].state_machine_arn : null
+}
